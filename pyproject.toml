@@ -1,0 +1,22 @@
+[project]
+name = "network-firewall"
+version = "0.1.0"
+description = "简易网络防火墙，基于PyDivert和PyQt6实现"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "psutil>=7.0.0",
+    "pydivert>=2.1.0",
+    "pyqt6>=6.8.1",
+    "pyyaml>=6.0.2",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+firewall = "main:main"
+
+[tool.setuptools]
+packages = ["firewall", "firewall.core", "firewall.ui", "firewall.resources"]
