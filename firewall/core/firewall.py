@@ -6,46 +6,89 @@ import sys
 import time
 import psutil
 from typing import Dict, List, Tuple, Optional, Callable
-import logging # Added import
-import re # Added import
+import logging
+import logging.handlers # Added for RotatingFileHandler
+import re
+from PyQt6.QtCore import QObject, pyqtSignal # Added for logging signal
 
 from .packet_filter import PacketFilter
 from .rule_manager import RuleManager
 
-# Configure logging
-log_file = os.path.join(os.getcwd(), 'firewall.log')
-# Ensure the log directory exists (useful if log file is in a subdirectory)
-os.makedirs(os.path.dirname(log_file), exist_ok=True)
+# --- Logging Configuration ---
+LOG_DIR = "logs"
+LOG_FILE = os.path.join(LOG_DIR, "firewall.log")
+os.makedirs(LOG_DIR, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, encoding='utf-8'),
-        # logging.StreamHandler() # Optional: Keep console output if needed
-    ]
+# Define log format
+log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Get root logger and set level to DEBUG to capture everything
+root_logger = logging.getLogger()
+# Clear existing handlers to avoid duplicates if script is re-run
+if root_logger.hasHandlers():
+    root_logger.handlers.clear()
+root_logger.setLevel(logging.DEBUG) # Capture all levels
+
+# Create Rotating File Handler
+file_handler = logging.handlers.RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=10*1024*1024, # 10 MB
+    backupCount=5,
+    encoding='utf-8'
 )
-# Separate logger for this module
+file_handler.setLevel(logging.INFO) # File logs INFO and above
+file_handler.setFormatter(log_formatter)
+root_logger.addHandler(file_handler)
+
+# --- Signal Handler for UI ---
+class SignalHandler(logging.Handler, QObject):
+    """Custom logging handler that emits a signal."""
+    log_signal = pyqtSignal(str)
+
+    def __init__(self, level=logging.NOTSET):
+        super().__init__(level)
+        QObject.__init__(self) # Initialize QObject
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            self.log_signal.emit(msg)
+        except Exception:
+            self.handleError(record)
+
+# Create Signal Handler instance (will be added in Firewall.__init__)
+signal_handler = SignalHandler()
+signal_handler.setLevel(logging.DEBUG) # UI receives DEBUG and above
+signal_handler.setFormatter(log_formatter)
+# Note: signal_handler is added to root_logger in Firewall.__init__
+
+# Separate logger for this module (gets config from root)
 logger = logging.getLogger('FirewallCore')
 
 
-class Firewall:
+class Firewall(QObject): # Inherit from QObject for signals
     """防火墙主类"""
-    
+    log_signal = signal_handler.log_signal # Expose the signal
+
     def __init__(self, rules_file: str = 'rules.yaml'):
         """初始化防火墙
         
         Args:
             rules_file: 规则文件路径
         """
+        super().__init__() # Initialize QObject base class
+        # Add signal handler to root logger *once* per Firewall instance
+        if signal_handler not in root_logger.handlers:
+             root_logger.addHandler(signal_handler)
+
         logger.info("Initializing Firewall...")
         # 创建规则管理器
         self.rule_manager = RuleManager(rules_file)
-        logger.info(f"RuleManager initialized with file: {rules_file}")
+        logger.debug(f"RuleManager initialized with file: {rules_file}") # Changed to DEBUG
         
         # 创建数据包过滤器
         self.packet_filter = PacketFilter()
-        logger.info("PacketFilter initialized.")
+        logger.debug("PacketFilter initialized.") # Changed to DEBUG
         
         # 状态
         self.is_running = False
@@ -66,7 +109,7 @@ class Firewall:
             'batch_size': 5,                 # 批处理大小
             'batch_wait_time': 100,          # 批处理等待时间(毫秒)
         }
-        logger.info(f"Default performance settings: {self.performance_settings}")
+        logger.debug(f"Default performance settings: {self.performance_settings}") # Changed to DEBUG
         
         # TODO: 添加统计信息持久化存储功能
         
@@ -80,10 +123,10 @@ class Firewall:
             logger.warning("Firewall is already running.")
             return True
             
-        logger.info("Starting Firewall...")
+        logger.info("Starting Firewall...") # Keep INFO for key status
         # 加载规则
         rules = self.rule_manager.get_rules()
-        logger.info("Rules loaded.")
+        logger.debug("Rules loaded.") # Changed to DEBUG
         
         # 设置过滤器规则
         self.packet_filter.ip_blacklist = rules['ip_blacklist']
@@ -92,21 +135,22 @@ class Firewall:
         self.packet_filter.port_whitelist = rules['port_whitelist']
         self.packet_filter.content_filters = rules['content_filters']
         self.packet_filter.protocol_filter = rules['protocol_filter']
-        logger.info("Rules applied to PacketFilter.")
+        logger.debug("Rules applied to PacketFilter.") # Changed to DEBUG
         
         # 应用性能配置到过滤器
         self._apply_performance_settings()
         
         # 注册数据包回调
         self.packet_filter.register_packet_callback(self._on_packet)
-        logger.info("Packet callback registered.")
+        logger.debug("Packet callback registered.") # Changed to DEBUG
         
         # 启动过滤器
-        logger.info("Attempting to start PacketFilter...")
+        logger.debug("Attempting to start PacketFilter...") # Changed to DEBUG
         result = self.packet_filter.start()
         if result:
             self.is_running = True
-            self._add_log("防火墙已启动", level=logging.INFO)
+            # Use logger directly, _add_log is redundant now with handlers
+            logger.info("防火墙已启动") 
             logger.info("PacketFilter started successfully. Firewall is running.")
         else:
             logger.error("Failed to start PacketFilter. Firewall startup aborted.")
@@ -127,7 +171,8 @@ class Firewall:
         # 停止过滤器
         self.packet_filter.stop()
         self.is_running = False
-        self._add_log("防火墙已停止", level=logging.INFO)
+        # Use logger directly
+        logger.info("防火墙已停止") 
         logger.info("Firewall stopped.")
         
         return True
@@ -193,7 +238,8 @@ class Firewall:
         # 如果防火墙正在运行，应用新设置
         if self.is_running and updated:
             self._apply_performance_settings()
-            self._add_log("已更新性能设置", level=logging.INFO)
+            # Use logger directly
+            logger.info("已更新性能设置") 
             logger.info("Applied updated performance settings.")
         elif not updated:
             logger.info("No changes detected in performance settings.")
@@ -233,7 +279,7 @@ class Firewall:
         """
         logger.info("Restarting Firewall...")
         self.stop()
-        logger.info("Waiting for resources to release...")
+        logger.debug("Waiting for resources to release...") # Changed to DEBUG
         time.sleep(1)  # 等待资源释放
         result = self.start()
         if result:
@@ -319,21 +365,8 @@ class Firewall:
             packet: 数据包对象
             should_pass: 是否放行
         """
-        action = '放行' if should_pass else '拦截'
-        protocol = 'TCP' if hasattr(packet, 'tcp') and packet.tcp else ('UDP' if hasattr(packet, 'udp') and packet.udp else 'Unknown')
-        src_ip = packet.src_addr if hasattr(packet, 'src_addr') else 'N/A'
-        dst_ip = packet.dst_addr if hasattr(packet, 'dst_addr') else 'N/A'
-        src_port = packet.src_port if hasattr(packet, 'src_port') else 'N/A'
-        dst_port = packet.dst_port if hasattr(packet, 'dst_port') else 'N/A'
-        size = len(packet.payload) if hasattr(packet, 'payload') and packet.payload else 0
-
-        log_message = (
-            f"Packet {action}: Proto={protocol}, Src={src_ip}:{src_port}, "
-            f"Dst={dst_ip}:{dst_port}, Size={size}"
-        )
-        
-        # 添加到日志文件
-        self._add_log(log_message, level=logging.DEBUG) # Log packet details as DEBUG
+        # This method now primarily triggers the external callback
+        # Logging of packet details is handled by the root logger via SignalHandler
         
         # 触发外部回调 (e.g., for UI updates)
         if self.packet_callback:
@@ -352,26 +385,8 @@ class Firewall:
                 logger.warning(f"Error returning packet to pool: {e}")
                 pass
             
-    def _add_log(self, message: str, level=logging.INFO):
-        """添加日志到文件
-        
-        Args:
-            message: 日志消息
-            level: 日志级别 (e.g., logging.INFO, logging.WARNING)
-        """
-        if level == logging.DEBUG:
-            logger.debug(message)
-        elif level == logging.INFO:
-            logger.info(message)
-        elif level == logging.WARNING:
-            logger.warning(message)
-        elif level == logging.ERROR:
-            logger.error(message)
-        elif level == logging.CRITICAL:
-            logger.critical(message)
-        else:
-            logger.info(message) # Default to INFO
-            
+    # _add_log method is removed as logging is handled by standard logger calls
+
     # IP黑白名单管理
     def add_ip_to_blacklist(self, ip: str) -> bool:
         """添加IP到黑名单
@@ -387,7 +402,8 @@ class Firewall:
         if result:
             if self.is_running and hasattr(self.packet_filter, 'add_ip_to_blacklist'):
                 self.packet_filter.add_ip_to_blacklist(ip)
-            self._add_log(f"添加IP {ip} 到黑名单", level=logging.INFO)
+            # Use logger directly
+            logger.info(f"添加IP {ip} 到黑名单") 
             logger.info(f"Successfully added IP {ip} to blacklist.")
         else:
              logger.warning(f"Failed to add IP {ip} to blacklist (RuleManager).")
@@ -407,7 +423,8 @@ class Firewall:
         if result:
             if self.is_running and hasattr(self.packet_filter, 'remove_ip_from_blacklist'):
                 self.packet_filter.remove_ip_from_blacklist(ip)
-            self._add_log(f"从黑名单移除IP {ip}", level=logging.INFO)
+            # Use logger directly
+            logger.info(f"从黑名单移除IP {ip}") 
             logger.info(f"Successfully removed IP {ip} from blacklist.")
         else:
             logger.warning(f"Failed to remove IP {ip} from blacklist (RuleManager).")
@@ -427,7 +444,8 @@ class Firewall:
         if result:
             if self.is_running and hasattr(self.packet_filter, 'add_ip_to_whitelist'):
                 self.packet_filter.add_ip_to_whitelist(ip)
-            self._add_log(f"添加IP {ip} 到白名单", level=logging.INFO)
+            # Use logger directly
+            logger.info(f"添加IP {ip} 到白名单") 
             logger.info(f"Successfully added IP {ip} to whitelist.")
         else:
             logger.warning(f"Failed to add IP {ip} to whitelist (RuleManager).")
@@ -447,7 +465,8 @@ class Firewall:
         if result:
             if self.is_running and hasattr(self.packet_filter, 'remove_ip_from_whitelist'):
                 self.packet_filter.remove_ip_from_whitelist(ip)
-            self._add_log(f"从白名单移除IP {ip}", level=logging.INFO)
+            # Use logger directly
+            logger.info(f"从白名单移除IP {ip}") 
             logger.info(f"Successfully removed IP {ip} from whitelist.")
         else:
             logger.warning(f"Failed to remove IP {ip} from whitelist (RuleManager).")
@@ -471,7 +490,8 @@ class Firewall:
         if result:
             if self.is_running and hasattr(self.packet_filter, 'add_port_to_blacklist'):
                 self.packet_filter.add_port_to_blacklist(port)
-            self._add_log(f"添加端口 {port} 到黑名单", level=logging.INFO)
+            # Use logger directly
+            logger.info(f"添加端口 {port} 到黑名单") 
             logger.info(f"Successfully added port {port} to blacklist.")
         else:
             logger.warning(f"Failed to add port {port} to blacklist (RuleManager).")
@@ -491,7 +511,8 @@ class Firewall:
         if result:
             if self.is_running and hasattr(self.packet_filter, 'remove_port_from_blacklist'):
                 self.packet_filter.remove_port_from_blacklist(port)
-            self._add_log(f"从黑名单移除端口 {port}", level=logging.INFO)
+            # Use logger directly
+            logger.info(f"从黑名单移除端口 {port}") 
             logger.info(f"Successfully removed port {port} from blacklist.")
         else:
             logger.warning(f"Failed to remove port {port} from blacklist (RuleManager).")
@@ -511,7 +532,8 @@ class Firewall:
         if result:
             if self.is_running and hasattr(self.packet_filter, 'add_port_to_whitelist'):
                 self.packet_filter.add_port_to_whitelist(port)
-            self._add_log(f"添加端口 {port} 到白名单", level=logging.INFO)
+            # Use logger directly
+            logger.info(f"添加端口 {port} 到白名单") 
             logger.info(f"Successfully added port {port} to whitelist.")
         else:
             logger.warning(f"Failed to add port {port} to whitelist (RuleManager).")
@@ -531,7 +553,8 @@ class Firewall:
         if result:
             if self.is_running and hasattr(self.packet_filter, 'remove_port_from_whitelist'):
                 self.packet_filter.remove_port_from_whitelist(port)
-            self._add_log(f"从白名单移除端口 {port}", level=logging.INFO)
+            # Use logger directly
+            logger.info(f"从白名单移除端口 {port}") 
             logger.info(f"Successfully removed port {port} from whitelist.")
         else:
             logger.warning(f"Failed to remove port {port} from whitelist (RuleManager).")
@@ -562,7 +585,8 @@ class Firewall:
                     except Exception as e:
                          logger.error(f"Failed to recompile content filters: {e}")
 
-            self._add_log(f"添加内容过滤规则: {pattern}", level=logging.INFO)
+            # Use logger directly
+            logger.info(f"添加内容过滤规则: {pattern}") 
             logger.info(f"Successfully added content filter: {pattern}")
         else:
             logger.warning(f"Failed to add content filter: {pattern} (RuleManager).")
@@ -590,7 +614,8 @@ class Firewall:
                     except Exception as e:
                          logger.error(f"Failed to recompile content filters: {e}")
 
-            self._add_log(f"移除内容过滤规则: {pattern}", level=logging.INFO)
+            # Use logger directly
+            logger.info(f"移除内容过滤规则: {pattern}") 
             logger.info(f"Successfully removed content filter: {pattern}")
         else:
             logger.warning(f"Failed to remove content filter: {pattern} (RuleManager).")
@@ -626,7 +651,8 @@ class Firewall:
             # 如果防火墙正在运行，更新过滤器
             if self.is_running and hasattr(self.packet_filter, 'protocol_filter'):
                 self.packet_filter.protocol_filter[proto_lower] = enabled
-                self._add_log(f"已{'启用' if enabled else '禁用'} {protocol.upper()} 协议过滤", level=logging.INFO)
+                # Use logger directly
+                logger.info(f"已{'启用' if enabled else '禁用'} {protocol.upper()} 协议过滤") 
                 logger.info(f"Applied {proto_lower.upper()} protocol filter change to running PacketFilter.")
             return True
         else:

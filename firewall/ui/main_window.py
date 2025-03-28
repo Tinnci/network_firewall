@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QSpinBox, QTextEdit, QListWidget, QListWidgetItem,
     QFileDialog # Added import
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QModelIndex
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QModelIndex, pyqtSlot # Added pyqtSlot
 from PyQt6.QtGui import QIcon, QColor
 
 from ..core.firewall import Firewall
@@ -41,13 +41,13 @@ class MainWindow(QMainWindow):
         # 创建UI组件
         self._create_ui()
         
-        # 设置更新定时器
+        # 设置更新定时器 (只更新状态和规则，不再更新日志)
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self._update_status)
         self.update_timer.start(1000)  # 每秒更新一次状态
 
-        # Define log file path consistent with firewall.py
-        self.log_file_path = os.path.join(os.getcwd(), 'firewall.log')
+        # Connect the log signal from Firewall instance
+        self.firewall.log_signal.connect(self._add_log_entry)
         
     def _create_ui(self):
         """创建UI组件"""
@@ -502,12 +502,10 @@ class MainWindow(QMainWindow):
         button_layout = QHBoxLayout()
         
         clear_button = QPushButton("清除日志")
-        clear_button.clicked.connect(self._clear_logs)
+        clear_button.clicked.connect(self._clear_log_table) # Changed target method
         button_layout.addWidget(clear_button)
         
-        refresh_button = QPushButton("刷新")
-        refresh_button.clicked.connect(self._update_logs)
-        button_layout.addWidget(refresh_button)
+        # Removed Refresh button
         
         layout.addLayout(button_layout)
         
@@ -565,8 +563,7 @@ class MainWindow(QMainWindow):
                 # 更新性能监控标签页
                 self._update_performance_tab(stats, status)
             
-            # 更新日志 (Now reads from file)
-            self._update_logs()
+            # Removed call to _update_logs()
             
             # 更新规则列表
             self._update_rule_lists()
@@ -700,7 +697,95 @@ class MainWindow(QMainWindow):
         except Exception as e:
             import traceback
             self.diagnosis_text.setText(f"运行诊断时出错: {str(e)}\n\n{traceback.format_exc()}")
-            
+
+    @pyqtSlot(str) # Decorator to mark this as a slot receiving a string
+    def _add_log_entry(self, log_message: str):
+        """Slot to receive log messages via signal and add them to the table."""
+        max_rows = 500 # Limit table rows for performance
+        try:
+            # Regex patterns (ensure raw strings and correct escaping)
+            # Copied from the old _update_logs method
+            packet_log_pattern = re.compile(
+                r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+[\w.]+\s+-\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+-\s+" # Timestamp, Name, Level
+                r"Packet (放行|拦截):\s+" # Action
+                r"Proto=(\w+),\s+"        # Protocol
+                r"Src=([\w.:\[\]]+):(\w+),\s+" # Allow IPv6 []
+                r"Dst=([\w.:\[\]]+):(\w+),\s+" # Allow IPv6 []
+                r"Size=(\d+)"             # Size
+            )
+            general_log_pattern = re.compile(
+                 r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+[\w.]+\s+-\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+-\s+(.*)"
+            )
+
+            log_message = log_message.strip()
+            if not log_message:
+                return
+
+            # Insert new row at the top
+            self.log_table.insertRow(0)
+
+            packet_match = packet_log_pattern.match(log_message)
+            if packet_match:
+                time_str, level, action, protocol, src_ip, src_port, dst_ip, dst_port, size = packet_match.groups()
+                display_time = time_str.split(',')[0] 
+
+                self.log_table.setItem(0, 0, QTableWidgetItem(display_time))
+                self.log_table.setItem(0, 1, QTableWidgetItem(src_ip))
+                self.log_table.setItem(0, 2, QTableWidgetItem(dst_ip))
+                self.log_table.setItem(0, 3, QTableWidgetItem(src_port))
+                self.log_table.setItem(0, 4, QTableWidgetItem(dst_port))
+                self.log_table.setItem(0, 5, QTableWidgetItem(protocol))
+                
+                action_item = QTableWidgetItem(action)
+                action_item.setForeground(QColor('red') if action == '拦截' else QColor('green'))
+                self.log_table.setItem(0, 6, action_item)
+                
+                self.log_table.setItem(0, 7, QTableWidgetItem(size))
+            else:
+                general_match = general_log_pattern.match(log_message) # Try general match here
+                if general_match:
+                     time_str, level, message = general_match.groups()
+                     display_time = time_str.split(',')[0]
+                     
+                     self.log_table.setItem(0, 0, QTableWidgetItem(display_time))
+                     message_item = QTableWidgetItem(message.strip()) # Strip message whitespace
+                     
+                     # Set color based on level
+                     if level == "ERROR" or level == "CRITICAL":
+                          message_item.setForeground(QColor('darkRed'))
+                     elif level == "WARNING":
+                           message_item.setForeground(QColor('orange'))
+                     # Optional: Color INFO/DEBUG differently if desired
+                     # else: # INFO or DEBUG
+                     #       message_item.setForeground(QColor('blue'))
+
+                     self.log_table.setItem(0, 1, message_item)
+                     # Span message across remaining columns
+                     self.log_table.setSpan(0, 1, 1, self.log_table.columnCount() - 1) 
+                else:
+                     # Fallback for unparseable lines
+                     self.log_table.setItem(0, 0, QTableWidgetItem(log_message))
+                     self.log_table.setSpan(0, 0, 1, self.log_table.columnCount())
+
+            # Limit table rows
+            if self.log_table.rowCount() > max_rows:
+                self.log_table.removeRow(self.log_table.rowCount() - 1)
+
+        except Exception as e:
+            # Avoid crashing the UI due to logging errors
+            print(f"Error adding log entry to UI: {e}")
+            # Optionally add a simple error message to the table itself
+            try:
+                self.log_table.insertRow(0)
+                error_item = QTableWidgetItem(f"UI Log Error: {e}")
+                error_item.setForeground(QColor('magenta'))
+                self.log_table.setItem(0, 0, error_item)
+                self.log_table.setSpan(0, 0, 1, self.log_table.columnCount())
+                if self.log_table.rowCount() > max_rows:
+                    self.log_table.removeRow(self.log_table.rowCount() - 1)
+            except: # Nested try-except to prevent error loops
+                pass
+
     def _restart_firewall(self):
         """重启防火墙"""
         # 先停止防火墙
@@ -784,109 +869,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "错误", f"应用设置失败: {str(e)}")
         
-    def _update_logs(self):
-        """更新日志表格 - 从文件读取"""
-        max_lines = 200 # Limit lines read for performance
-        log_lines = []
-        try:
-            if os.path.exists(self.log_file_path):
-                with open(self.log_file_path, 'r', encoding='utf-8') as f:
-                    # Read lines efficiently, potentially limiting to last N
-                    # For simplicity, read all and take last N
-                    all_lines = f.readlines()
-                    log_lines = all_lines[-max_lines:]
-            else:
-                 # Log file doesn't exist yet
-                 self.log_table.setRowCount(0)
-                 return
+    # Removed _update_logs method
 
-        except Exception as e:
-            print(f"Error reading log file {self.log_file_path}: {e}")
-            # Optionally show error in UI status bar or log table
-            self.log_table.setRowCount(1)
-            error_item = QTableWidgetItem(f"无法读取日志文件: {e}")
-            self.log_table.setItem(0, 0, error_item)
-            self.log_table.setSpan(0, 0, 1, self.log_table.columnCount()) # Span item across row
-            return
-
-        self.log_table.setRowCount(len(log_lines))
-        
-        # Regex patterns (ensure raw strings and correct escaping)
-        packet_log_pattern = re.compile(
-            r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+[\w.]+\s+-\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+-\s+" # Timestamp, Name, Level
-            r"Packet (放行|拦截):\s+" # Action
-            r"Proto=(\w+),\s+"        # Protocol
-            r"Src=([\w.:\[\]]+):(\w+),\s+" # Allow IPv6 []
-            r"Dst=([\w.:\[\]]+):(\w+),\s+" # Allow IPv6 []
-            r"Size=(\d+)"             # Size
-        )
-        general_log_pattern = re.compile(
-             r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+[\w.]+\s+-\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+-\s+(.*)"
-        )
-
-
-        # 填充日志数据 (reversed to show newest first)
-        row_index = 0
-        for line in reversed(log_lines):
-            line = line.strip()
-            if not line:
-                continue
-
-            packet_match = packet_log_pattern.match(line)
-            # IMPORTANT: Only try general match if packet match fails
-            if packet_match:
-                time_str, level, action, protocol, src_ip, src_port, dst_ip, dst_port, size = packet_match.groups()
-                display_time = time_str.split(',')[0] 
-
-                self.log_table.setItem(row_index, 0, QTableWidgetItem(display_time))
-                self.log_table.setItem(row_index, 1, QTableWidgetItem(src_ip))
-                self.log_table.setItem(row_index, 2, QTableWidgetItem(dst_ip))
-                self.log_table.setItem(row_index, 3, QTableWidgetItem(src_port))
-                self.log_table.setItem(row_index, 4, QTableWidgetItem(dst_port))
-                self.log_table.setItem(row_index, 5, QTableWidgetItem(protocol))
-                
-                action_item = QTableWidgetItem(action)
-                action_item.setForeground(QColor('red') if action == '拦截' else QColor('green'))
-                self.log_table.setItem(row_index, 6, action_item)
-                
-                self.log_table.setItem(row_index, 7, QTableWidgetItem(size))
-            else:
-                general_match = general_log_pattern.match(line) # Try general match here
-                if general_match:
-                     time_str, level, message = general_match.groups()
-                     display_time = time_str.split(',')[0]
-                     
-                     self.log_table.setItem(row_index, 0, QTableWidgetItem(display_time))
-                     message_item = QTableWidgetItem(message.strip()) # Strip message whitespace
-                     
-                     if level == "ERROR" or level == "CRITICAL":
-                          message_item.setForeground(QColor('darkRed'))
-                     elif level == "WARNING":
-                           message_item.setForeground(QColor('orange'))
-                     else: # INFO or DEBUG
-                           message_item.setForeground(QColor('blue'))
-                     self.log_table.setItem(row_index, 1, message_item)
-                     # Span message across remaining columns
-                     self.log_table.setSpan(row_index, 1, 1, self.log_table.columnCount() - 1) 
-                else:
-                     # Fallback for unparseable lines
-                     self.log_table.setItem(row_index, 0, QTableWidgetItem(line))
-                     self.log_table.setSpan(row_index, 0, 1, self.log_table.columnCount())
-
-            row_index += 1
-                
-    def _clear_logs(self):
-        """清除日志表格和文件"""
-        # Clear table
+    def _clear_log_table(self): # Renamed from _clear_logs
+        """清除日志表格内容"""
         self.log_table.setRowCount(0)
-        # Clear file (optional, might be better to just clear table display)
-        try:
-            # Open in write mode to truncate
-            with open(self.log_file_path, 'w', encoding='utf-8') as f:
-                f.write("") 
-            QMessageBox.information(self, "日志清除", "日志显示和日志文件已清除。")
-        except Exception as e:
-            QMessageBox.warning(self, "清除错误", f"无法清除日志文件: {e}")
+        # Removed file clearing logic
+        QMessageBox.information(self, "日志清除", "日志显示已清除。")
         
     def _update_rule_lists(self):
         """更新规则列表"""

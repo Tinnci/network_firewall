@@ -23,15 +23,13 @@ logger = logging.getLogger('PacketFilter')
 
 class PacketFilter:
     """数据包过滤器核心类"""
+    system_info_logged = False # Changed to class variable
     
     def __init__(self):
         """初始化过滤器"""
         self.running = False
         self.thread = None
         self.divert = None
-        
-        # 系统信息日志标识，防止重复记录
-        self.system_info_logged = False
         
         # 记录系统信息和WinDivert状态，帮助诊断问题
         self._log_system_info()
@@ -109,7 +107,7 @@ class PacketFilter:
         self.last_resource_check = 0
         self.resource_check_interval = 30  # 30秒检查一次
         
-        logger.info("数据包过滤器初始化完成")
+        logger.debug("数据包过滤器初始化完成") # Changed to DEBUG
         
         # TODO: 添加配置文件加载功能，支持从配置文件初始化过滤器 (Lower Priority)
         # TODO: 添加流量分析模块，实现异常流量监测 (Lower Priority)
@@ -128,7 +126,7 @@ class PacketFilter:
         # 预编译内容过滤规则
         try:
             self.compiled_filters = [re.compile(pattern) for pattern in self.content_filters]
-            logger.info(f"预编译了 {len(self.compiled_filters)} 个内容过滤规则。")
+            logger.debug(f"预编译了 {len(self.compiled_filters)} 个内容过滤规则。") # Changed to DEBUG
         except re.error as e:
              logger.error(f"内容过滤规则编译失败: {e} - 请检查规则格式。")
              # Decide if startup should fail or continue without content filtering
@@ -165,10 +163,10 @@ class PacketFilter:
             self._configure_windivert_params()
             
             # 记录启动信息
-            logger.info("WinDivert queue length set to 8192, queue time to 2000ms")
-            logger.info("Packet filter started")
-            logger.info(f"Adaptive settings configuration: {self.adaptive_settings}")
-            logger.info("Packet processing thread started")
+            logger.debug("WinDivert queue length set to 8192, queue time to 2000ms") # Changed to DEBUG
+            logger.info("Packet filter started") # Keep INFO for key status
+            logger.debug(f"Adaptive settings configuration: {self.adaptive_settings}") # Changed to DEBUG
+            logger.debug("Packet processing thread started") # Changed to DEBUG
             
             # 初始化统计时间
             self.stats["start_time"] = time.time()
@@ -202,14 +200,14 @@ class PacketFilter:
         if not self.running:
             return True
             
-        self.running = False
-        logger.info("Stopping packet filter...")
+        logger.info("Stopping packet filter...") # Keep INFO for key status
+        self.running = False # Moved setting self.running earlier
         
         # 关闭WinDivert句柄
         if self.divert:
             try:
                 self.divert.close()
-                logger.info("WinDivert handle closed")
+                logger.debug("WinDivert handle closed") # Changed to DEBUG
             except Exception as e:
                 logger.error(f"关闭WinDivert句柄时出错: {e}")
             
@@ -223,7 +221,7 @@ class PacketFilter:
             worker.join(timeout=0.5)
         self.worker_threads = []
         
-        logger.info("Packet filter stopped")
+        logger.info("Packet filter stopped") # Keep INFO for key status
         return True
     
     def _packet_handler(self):
@@ -239,6 +237,8 @@ class PacketFilter:
         
         while self.running:
             try:
+                if not self.running: # Check before recv
+                    break
                 # 批量处理模式，提高效率
                 if self.adaptive_settings.get('use_batch_mode', True):
                     # 接收数据包批次
@@ -250,6 +250,8 @@ class PacketFilter:
                     start_time = time.time()
                     while len(batch) < batch_size and time.time() - start_time < batch_wait:
                         packet = self.divert.recv()
+                        if not self.running: # Check after recv in loop
+                            break
                         if packet:
                             batch.append(packet)
                         else:
@@ -263,6 +265,8 @@ class PacketFilter:
                 else:
                     # 单包处理模式
                     packet = self.divert.recv()
+                    if not self.running: # Check after recv
+                        break
                     if packet:
                         self._process_single_packet(packet, error_count, error_limit, consecutive_errors)
                         packets_since_last_stats += 1
@@ -302,6 +306,8 @@ class PacketFilter:
     
     def _process_single_packet(self, packet, error_count, error_limit, consecutive_errors):
         """处理单个数据包的主逻辑"""
+        if not self.running: # Check at the beginning
+            return
         self.stats["total_packets"] += 1
         self.stats["last_packet_time"] = time.time()
         
@@ -357,6 +363,8 @@ class PacketFilter:
     
     def _process_packet_action(self, packet, should_pass):
         """处理数据包的具体动作（发送或丢弃）"""
+        if not self.running: # Check at the beginning
+            return
         try:
             # 处理数据包
             if should_pass:
@@ -702,7 +710,7 @@ class PacketFilter:
             
             # 检查是否为可能导致错误的数据包类型
             if self._is_problematic_packet(packet):
-                logger.info("检测到可能导致问题的数据包类型，默认放行")
+                logger.debug("检测到可能导致问题的数据包类型，默认放行") # Changed to DEBUG
                 return True
                 
             # 协议过滤
@@ -1323,7 +1331,7 @@ class PacketFilter:
 
     def _log_system_info(self):
         """记录系统信息和WinDivert状态，用于问题诊断"""
-        if self.system_info_logged:
+        if PacketFilter.system_info_logged: # Check class variable
             # 如果已经记录过系统信息，则不再重复记录
             logger.debug("系统信息已记录，跳过重复记录")
             return
@@ -1383,11 +1391,11 @@ class PacketFilter:
             logger.info("=" * 50)
             
             # 标记系统信息已记录
-            self.system_info_logged = True
+            PacketFilter.system_info_logged = True # Set class variable
         except Exception as e:
             logger.error(f"记录系统信息时出错: {e}")
             # 即使出错也标记为已记录，避免连续多次记录失败
-            self.system_info_logged = True
+            PacketFilter.system_info_logged = True # Set class variable
 
     def get_packet_from_pool(self):
         """从对象池获取一个数据包对象"""
