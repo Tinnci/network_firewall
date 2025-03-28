@@ -1,10 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import os
+import sys
 import time
 import logging
-from typing import Dict, Any, Union # Added Union
-from PyQt6.QtCore import QObject # Keep QObject inheritance for signals
+import re
+from typing import Dict, List, Tuple, Optional, Callable, Any, Union 
+from PyQt6.QtCore import QObject, pyqtSignal # Keep QObject inheritance for signals
 
 # Import from local modules
 from .rule_manager import RuleManager
@@ -12,7 +15,7 @@ from .packet_interceptor import PacketInterceptor
 from .packet_analyzer import PacketAnalyzer
 from .packet_processor import PacketProcessor
 # Import from utils
-from ..utils.logging_utils import setup_logging, SignalHandler
+from ..utils.logging_utils import setup_logging, SignalHandler, clear_signal_handler_on_exit
 from ..utils.performance_utils import get_system_resource_usage
 
 # Setup logging and get the signal handler instance
@@ -25,22 +28,26 @@ logger = logging.getLogger('FirewallCore')
 
 class Firewall(QObject):
     """防火墙主类，协调各个组件"""
+    # 使用传递的信号而不是直接引用
     log_signal = signal_handler_instance.log_signal
 
     def __init__(self, rules_file: str = 'rules.yaml'):
         """初始化防火墙"""
         super().__init__()
+        # Save the signal handler instance, but don't create strong references
+        # The handler is already stored in a global variable
+        # self.signal_handler = signal_handler_instance 
 
-        logger.info("Initializing Firewall...")
+        logger.info("正在初始化防火墙...")
         # 创建规则管理器
         self.rule_manager = RuleManager(rules_file)
-        logger.debug(f"RuleManager initialized with file: {rules_file}")
+        logger.debug(f"使用文件初始化RuleManager: {rules_file}")
 
         # 创建核心组件
         self.interceptor = PacketInterceptor()
         self.analyzer = PacketAnalyzer()
         self.processor = PacketProcessor(self.interceptor, self.analyzer)
-        logger.debug("Interceptor, Analyzer, and Processor initialized.")
+        logger.debug("已初始化Interceptor、Analyzer和Processor。")
 
         # 状态
         self.is_running = False
@@ -63,24 +70,35 @@ class Firewall(QObject):
             # 'skip_large_packets': False,
             # 'large_packet_threshold': 1460,
         }
-        logger.debug(f"Default performance settings: {self.performance_settings}")
+        logger.debug(f"默认性能设置: {self.performance_settings}")
 
         # Connect processor's callback (optional, if Firewall needs to react)
         # self.processor.register_processed_packet_callback(self._on_packet_processed)
 
         # TODO: 添加统计信息持久化存储功能
+        
+    def __del__(self):
+        """在对象销毁时清理资源"""
+        # 确保在对象销毁时不会留下循环引用
+        # 移除对信号处理器的引用
+        try:
+            # 不调用clear_signal_handler_on_exit()，因为可能过早清理全局对象
+            # 而是在这里只清理自己的引用
+            self.log_signal = None
+        except:
+            pass
 
     def start(self) -> bool:
         """启动防火墙"""
         if self.is_running:
-            logger.warning("Firewall is already running.")
+            logger.warning("防火墙已经在运行中。")
             return True
 
-        logger.info("Starting Firewall...")
+        logger.info("正在启动防火墙...")
         # 加载并应用规则
         rules = self.rule_manager.get_rules()
         self.analyzer.set_rules(rules)
-        logger.debug("Rules loaded and applied to Analyzer.")
+        logger.debug("规则已加载并应用于Analyzer。")
 
         # 应用性能配置
         self._apply_performance_settings() # Apply settings to relevant components
@@ -93,20 +111,20 @@ class Firewall(QObject):
         if self.interceptor.start():
             self.is_running = True
             logger.info("防火墙已启动")
-            logger.info("Interceptor started successfully. Firewall is running.")
+            logger.info("Interceptor成功启动。防火墙正在运行。")
             return True
         else:
-            logger.error("Failed to start Packet Interceptor. Firewall startup aborted.")
+            logger.error("无法启动包拦截器。防火墙启动中止。")
             self.processor.stop() # Stop processor if interceptor failed
             return False
 
     def stop(self) -> bool:
         """停止防火墙"""
         if not self.is_running:
-            logger.warning("Firewall is not running.")
+            logger.warning("防火墙未运行。")
             return True
 
-        logger.info("Stopping Firewall...")
+        logger.info("正在停止防火墙...")
         # 停止拦截器 (stops receiving new packets)
         self.interceptor.stop()
         # 停止处理器 (stops worker threads and processing queue)
@@ -114,7 +132,7 @@ class Firewall(QObject):
 
         self.is_running = False
         logger.info("防火墙已停止")
-        logger.info("Firewall stopped.")
+        logger.info("防火墙已停止。")
         return True
 
     def _apply_performance_settings(self):
