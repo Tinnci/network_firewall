@@ -141,7 +141,8 @@ class Firewall:
                  self.packet_filter.adaptive_settings[key] = value
                  logger.debug(f"Set adaptive_settings['{key}'] = {value}")
             else:
-                 logger.warning(f"Key '{key}' not found in packet_filter.adaptive_settings")
+                 # Downgrade log level as keys are expected to exist now after packet_filter fix
+                 logger.debug(f"Key '{key}' not found in packet_filter.adaptive_settings (This might be okay if handled elsewhere)")
 
         # 设置工作线程数
         if hasattr(self.packet_filter, 'num_workers'):

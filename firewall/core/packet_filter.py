@@ -77,6 +77,8 @@ class PacketFilter:
         
         # 自适应策略
         self.adaptive_settings = {
+            'use_batch_mode': True,        # 是否使用批量接收模式 (Added)
+            'use_queue_model': False,       # 是否使用队列模型 (Added)
             'skip_local_packets': True,    # 跳过本地大数据包处理
             'skip_large_packets': False,   # 跳过所有大数据包
             'large_packet_threshold': 1460, # 大数据包阈值
