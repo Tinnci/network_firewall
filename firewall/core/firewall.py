@@ -3,7 +3,7 @@
 
 import time
 import logging
-from typing import Dict, Optional, Any, Union 
+from typing import Dict, Optional, Any, Union, Callable
 from PyQt6.QtCore import QObject # Keep QObject inheritance for signals
 
 # Import from local modules
@@ -59,6 +59,9 @@ class Firewall(QObject):
         # 性能配置 (Load defaults from config)
         self.performance_settings = CONFIG['performance'].copy()
         logger.debug(f"默认性能设置: {self.performance_settings}")
+        
+        # 数据包回调
+        self.packet_callback = None
 
         # TODO: 添加统计信息持久化存储功能
         
@@ -330,3 +333,14 @@ class Firewall(QObject):
              self._update_analyzer_rules()
              # logger.info(f"{protocol.upper()} filter set to {enabled}.") # RuleManager logs this
         return result
+
+    def register_packet_callback(self, callback: Callable[[Dict, bool], None]):
+        """注册数据包处理回调，用于UI实时显示数据包信息
+        
+        Args:
+            callback: 回调函数，接收两个参数：packet_info(Dict)和passed(bool)
+        """
+        self.packet_callback = callback
+        self.processor.register_processed_packet_callback(callback)
+        logger.debug("已注册数据包处理回调函数")
+        return True

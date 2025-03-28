@@ -8,9 +8,10 @@ import logging
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QTabWidget, QMessageBox, QCheckBox, QGroupBox, QFileDialog 
+    QPushButton, QLabel, QTabWidget, QMessageBox, QCheckBox, QGroupBox, QFileDialog
 )
-from PyQt6.QtCore import QTimer, pyqtSlot 
+# Import QObject and pyqtSignal for custom signals
+from PyQt6.QtCore import QTimer, pyqtSlot, QObject, pyqtSignal, Qt
 
 from ..core.firewall import Firewall
 # Import new tab classes
@@ -20,12 +21,16 @@ from .tabs.content_filter_tab import ContentFilterTab
 from .tabs.performance_tab import PerformanceTab
 from .tabs.advanced_settings_tab import AdvancedSettingsTab
 from .tabs.log_tab import LogTab
+from .tabs.traffic_monitor_tab import TrafficMonitorTab  # 导入新的流量监控标签页
 
 # Get logger for UI module
 logger = logging.getLogger('MainWindowUI')
 
 class MainWindow(QMainWindow):
     """防火墙主窗口"""
+    # Define signals to safely update UI from other threads
+    log_entry_received = pyqtSignal(dict)
+    traffic_packet_received = pyqtSignal(dict)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -35,14 +40,17 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 600)
         self.last_update_time = 0
         self.update_interval = 1000  # ms
+        # Removed self.traffic_update_interval
 
         # Create UI components (now instantiates tab widgets)
-        self._create_ui() 
+        self._create_ui()
         
         # Setup timer for status and rule list updates
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self._update_status)
         self.update_timer.start(1000)
+        
+        # Removed traffic_timer setup
 
         # Connect signals from core and tabs
         self._connect_signals()
@@ -50,6 +58,9 @@ class MainWindow(QMainWindow):
         # Initial load of data into UI
         self._update_rule_lists()
         self._load_advanced_settings()
+        
+        # 注册数据包处理回调
+        self.firewall.register_packet_callback(self._handle_packet)
 
     def _create_ui(self):
         """创建UI组件，包括实例化和添加标签页"""
@@ -71,11 +82,13 @@ class MainWindow(QMainWindow):
         self.performance_tab = PerformanceTab()
         self.advanced_settings_tab = AdvancedSettingsTab()
         self.log_tab = LogTab()
+        self.traffic_monitor_tab = TrafficMonitorTab()  # 实例化流量监控标签页
 
         # Add Tabs
         self.tab_widget.addTab(self.ip_filter_tab, "IP过滤")
         self.tab_widget.addTab(self.port_filter_tab, "端口过滤")
         self.tab_widget.addTab(self.content_filter_tab, "内容过滤")
+        self.tab_widget.addTab(self.traffic_monitor_tab, "流量监控")  # 添加流量监控标签页
         self.tab_widget.addTab(self.performance_tab, "性能监控")
         self.tab_widget.addTab(self.advanced_settings_tab, "高级设置")
         self.tab_widget.addTab(self.log_tab, "日志")
@@ -84,9 +97,16 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         """连接所有信号和槽"""
-        # Core Firewall signal
-        self.firewall.log_signal.connect(self.log_tab.add_log_entry) # Connect directly to log tab's slot
+        # --- Core Firewall Signals ---
+        # Connect core log signal to a MainWindow slot that emits a UI-safe signal
+        self.firewall.log_signal.connect(self._handle_core_log_signal)
+        # Connect the UI-safe signal to the LogTab slot
+        self.log_entry_received.connect(self.log_tab.add_log_entry)
 
+        # Connect the UI-safe traffic signal to the TrafficMonitorTab slot
+        self.traffic_packet_received.connect(self.traffic_monitor_tab.add_packet)
+
+        # --- Tab Signals ---
         # IP Filter Tab signals
         self.ip_filter_tab.add_blacklist_requested.connect(self._add_ip_to_blacklist)
         self.ip_filter_tab.remove_blacklist_requested.connect(self._remove_ip_from_blacklist)
@@ -111,6 +131,62 @@ class MainWindow(QMainWindow):
         # Advanced Settings Tab signals
         self.advanced_settings_tab.apply_settings_requested.connect(self._apply_advanced_settings)
         self.advanced_settings_tab.restart_windivert_requested.connect(self._restart_windivert)
+        
+        # 流量监控标签页信号
+        self.traffic_monitor_tab.clear_traffic_requested.connect(self._clear_traffic_monitor) # Keep clear connection
+        # Removed connections for pause_monitoring_toggled and refresh_rate.valueChanged
+
+    # --- 流量监控相关方法 ---
+    def _handle_packet(self, packet_info: Dict, passed: bool):
+        """处理从防火墙接收的数据包信息
+        
+        Args:
+            packet_info: 数据包信息字典
+            passed: 是否放行
+        """
+        # 准备添加到流量监控的数据包信息
+        monitor_info = packet_info.copy()
+        
+        # 添加时间戳
+        monitor_info["time"] = time.strftime("%H:%M:%S")
+        
+        # 添加方向信息 (修正：从 packet_info 获取 'direction')
+        # 'direction' 键的值应为 'inbound' 或 'outbound' (来自 get_packet_info)
+        direction_from_core = packet_info.get('direction', 'unknown').lower()
+        if direction_from_core == 'outbound':
+             monitor_info["direction"] = "出站"
+        elif direction_from_core == 'inbound':
+             monitor_info["direction"] = "入站"
+        else:
+             monitor_info["direction"] = "未知" # Fallback
+            
+        # 添加动作信息
+        monitor_info["action"] = "放行" if passed else "拦截"
+        
+        # 发送到流量监控标签页 - CHANGE: Emit signal instead of direct call
+        self.traffic_packet_received.emit(monitor_info)
+
+    # Slot to handle log signal from core firewall (potentially different thread)
+    @pyqtSlot(dict)
+    def _handle_core_log_signal(self, log_entry: dict):
+        """Receives log entry from core and emits a signal safe for UI thread."""
+        # Simply emit the signal, Qt handles thread marshalling via QueuedConnection (default)
+        self.log_entry_received.emit(log_entry)
+
+    # Removed _update_traffic_monitor method
+        
+    def _clear_traffic_monitor(self):
+        """清除流量监控数据 (Slot connected from TrafficMonitorTab)"""
+        # This method might still be useful if MainWindow needs to coordinate
+        # clearing across multiple components or interact with the core.
+        # For now, it just logs. If TrafficMonitorTab handles everything,
+        # this connection could potentially be removed too.
+        logger.info("清除流量监控数据请求已收到。")
+        # If TrafficMonitorTab handles its own clearing, no further action needed here.
+        
+    # Removed _toggle_traffic_monitoring method
+            
+    # Removed _set_traffic_update_interval method
 
     # --- Control Panel Creation (Remains in MainWindow) ---
     def _create_control_panel(self) -> QWidget:
@@ -413,7 +489,8 @@ class MainWindow(QMainWindow):
         if self.firewall.is_running:
             self.firewall.stop()
         self.update_timer.stop()
-        logger.info("UI Timer stopped.")
+        # Removed self.traffic_timer.stop()
+        logger.info("UI Timers stopped.")
         event.accept()
         logger.info("Exiting application.")
         QApplication.quit()
