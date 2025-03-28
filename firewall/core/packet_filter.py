@@ -16,21 +16,10 @@ from typing import List, Dict, Set, Tuple, Optional, Union, Callable
 import pydivert
 from ctypes import c_void_p, create_string_buffer, memmove
 
-# 配置日志记录
-log_file = os.path.join(os.getcwd(), 'firewall_debug.log')
-# Ensure the log directory exists
-os.makedirs(os.path.dirname(log_file), exist_ok=True)
-
-logging.basicConfig(
-    level=logging.DEBUG, # Keep DEBUG for packet filter core
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, encoding='utf-8'),
-        logging.StreamHandler() # Keep console output for debugging
-    ]
-)
-
+# Get logger instance (configuration should happen elsewhere, e.g., firewall.py or main.py)
 logger = logging.getLogger('PacketFilter')
+# Set default level for this specific logger if needed, but basicConfig is avoided
+# logger.setLevel(logging.DEBUG) 
 
 class PacketFilter:
     """数据包过滤器核心类"""
