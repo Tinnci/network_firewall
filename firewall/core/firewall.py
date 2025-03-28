@@ -3,7 +3,7 @@
 
 import time
 import logging
-from typing import Dict, Any, Union 
+from typing import Dict, Optional, Any, Union 
 from PyQt6.QtCore import QObject # Keep QObject inheritance for signals
 
 # Import from local modules
@@ -12,11 +12,14 @@ from .packet_interceptor import PacketInterceptor
 from .packet_analyzer import PacketAnalyzer
 from .packet_processor import PacketProcessor
 # Import from utils
-from ..utils.logging_utils import setup_logging, SignalHandler
+from ..utils.logging_utils import setup_logging, SignalHandler 
 from ..utils.performance_utils import get_system_resource_usage
+# Import config
+from ..config import CONFIG 
 
 # Setup logging and get the signal handler instance
-# Consider moving this call to main.py
+# This still needs to be called somewhere, ideally main.py, but keep here for now
+# Ensure it uses the config
 signal_handler_instance: SignalHandler = setup_logging()
 
 # Get logger for this module
@@ -28,14 +31,18 @@ class Firewall(QObject):
     # 使用传递的信号而不是直接引用
     log_signal = signal_handler_instance.log_signal
 
-    def __init__(self, rules_file: str = 'rules.yaml'):
+    def __init__(self, rules_file: Optional[str] = None): # Allow overriding rules file path
         """初始化防火墙"""
         super().__init__()
         # Save the signal handler instance, but don't create strong references
-        # The handler is already stored in a global variable
         # self.signal_handler = signal_handler_instance 
 
         logger.info("正在初始化防火墙...")
+        
+        # Use rules file path from config if not provided
+        if rules_file is None:
+            rules_file = CONFIG['rules'].get('rules_file', 'rules.yaml')
+            
         # 创建规则管理器
         self.rule_manager = RuleManager(rules_file)
         logger.debug(f"使用文件初始化RuleManager: {rules_file}")
@@ -49,38 +56,15 @@ class Firewall(QObject):
         # 状态
         self.is_running = False
 
-        # 性能配置 (Central place for settings)
-        self.performance_settings = {
-            # Interceptor settings (currently not directly configurable in Interceptor)
-            # 'use_batch_mode': True, # Example if Interceptor supported it
-            # 'batch_size': 5,
-            # 'batch_wait_time': 100,
-            # Processor settings
-            'use_queue_model': False,
-            'num_workers': 2,
-            'use_packet_pool': True,
-            'packet_pool_size': 100, # Used for max_pool_size in Processor
-            # Analyzer settings
-            'skip_local_packets': True,
-            'allow_private_network': True,
-            # Settings not directly mapped currently
-            # 'skip_large_packets': False,
-            # 'large_packet_threshold': 1460,
-        }
+        # 性能配置 (Load defaults from config)
+        self.performance_settings = CONFIG['performance'].copy()
         logger.debug(f"默认性能设置: {self.performance_settings}")
-
-        # Connect processor's callback (optional, if Firewall needs to react)
-        # self.processor.register_processed_packet_callback(self._on_packet_processed)
 
         # TODO: 添加统计信息持久化存储功能
         
     def __del__(self):
         """在对象销毁时清理资源"""
-        # 确保在对象销毁时不会留下循环引用
-        # 移除对信号处理器的引用
         try:
-            # 不调用clear_signal_handler_on_exit()，因为可能过早清理全局对象
-            # 而是在这里只清理自己的引用
             self.log_signal = None
         except:
             pass
@@ -98,21 +82,22 @@ class Firewall(QObject):
         logger.debug("规则已加载并应用于Analyzer。")
 
         # 应用性能配置
-        self._apply_performance_settings() # Apply settings to relevant components
+        self._apply_performance_settings() 
 
-        # 启动处理器 (which might start worker threads)
+        # 启动处理器 
         self.processor.start()
 
-        # 启动拦截器 (which starts the main packet loop)
-        # Pass the filter string if needed, default is "tcp or udp"
-        if self.interceptor.start():
+        # 启动拦截器 
+        interceptor_cfg = CONFIG.get('interceptor', {})
+        filter_str = interceptor_cfg.get('filter_string', "tcp or udp")
+        if self.interceptor.start(filter_string=filter_str):
             self.is_running = True
             logger.info("防火墙已启动")
             logger.info("Interceptor成功启动。防火墙正在运行。")
             return True
         else:
             logger.error("无法启动包拦截器。防火墙启动中止。")
-            self.processor.stop() # Stop processor if interceptor failed
+            self.processor.stop() 
             return False
 
     def stop(self) -> bool:
@@ -122,14 +107,11 @@ class Firewall(QObject):
             return True
 
         logger.info("正在停止防火墙...")
-        # 停止拦截器 (stops receiving new packets)
         self.interceptor.stop()
-        # 停止处理器 (stops worker threads and processing queue)
         self.processor.stop()
 
         self.is_running = False
         logger.info("防火墙已停止")
-        logger.info("防火墙已停止。")
         return True
 
     def _apply_performance_settings(self):
@@ -147,13 +129,22 @@ class Firewall(QObject):
             'use_queue_model': self.performance_settings.get('use_queue_model', False),
             'num_workers': self.performance_settings.get('num_workers', 2),
             'use_packet_pool': self.performance_settings.get('use_packet_pool', True),
-            'max_pool_size': self.performance_settings.get('packet_pool_size', 100), # Use packet_pool_size for max_pool_size
+            'max_pool_size': self.performance_settings.get('packet_pool_size', 100), 
         }
         self.processor.set_settings(processor_settings)
 
-        # Apply settings to Interceptor (if applicable in the future)
-        # interceptor_settings = { ... }
-        # self.interceptor.set_settings(interceptor_settings)
+        # Apply settings to Interceptor (if applicable)
+        interceptor_cfg = CONFIG.get('interceptor', {})
+        interceptor_settings = {
+             'queue_len': interceptor_cfg.get('queue_len', 8192),
+             'queue_time': interceptor_cfg.get('queue_time', 2000),
+        }
+        # Assuming interceptor might have a method like this in the future
+        if hasattr(self.interceptor, '_configure_windivert_params'):
+             # This needs modification in interceptor to accept params
+             # For now, interceptor uses its own defaults or config directly if modified
+             pass 
+             # self.interceptor._configure_windivert_params(**interceptor_settings) 
 
         logger.debug("Performance settings applied to components.")
 
@@ -161,14 +152,16 @@ class Firewall(QObject):
         """更新性能设置"""
         logger.info(f"Updating performance settings: {new_settings}")
         updated = False
+        # Use default config as the reference for valid keys
+        valid_keys = CONFIG['performance'].keys() 
         for key, value in new_settings.items():
-            if key in self.performance_settings:
-                if self.performance_settings[key] != value:
+            if key in valid_keys: # Check against valid keys from default config
+                if self.performance_settings.get(key) != value:
                     self.performance_settings[key] = value
                     logger.debug(f"Updated setting: {key} = {value}")
                     updated = True
             else:
-                logger.warning(f"Attempted to update unknown setting: {key}")
+                logger.warning(f"Attempted to update unknown or non-performance setting: {key}")
 
         if updated:
             self._apply_performance_settings() # Re-apply all settings
@@ -185,12 +178,7 @@ class Firewall(QObject):
             'rules': self.rule_manager.get_rules(),
             'performance_settings': self.performance_settings,
             'processor_stats': self.processor.get_stats() if self.processor else {},
-            # Add interceptor/analyzer stats if they expose them
-            # 'interceptor_stats': self.interceptor.get_stats() if self.interceptor else {},
-            # 'analyzer_stats': self.analyzer.get_stats() if self.analyzer else {},
         }
-        # Add diagnosis info (needs adaptation)
-        # status['diagnosis'] = self._get_diagnosis()
         return status
 
     def restart(self) -> bool:
@@ -213,7 +201,6 @@ class Firewall(QObject):
             return False
 
         logger.info("Attempting to restart WinDivert via Interceptor...")
-        # The interceptor now handles its own restart logic
         result = self.interceptor.restart_windivert()
         if result:
             logger.info("WinDivert restarted successfully via Interceptor.")
@@ -229,13 +216,9 @@ class Firewall(QObject):
         processor_stats = self.processor.get_stats()
         detailed_stats = {
             **processor_stats,
-            # Add other component stats if needed
         }
-
-        # Add system resource usage
         detailed_stats['system_resources'] = get_system_resource_usage()
 
-        # Calculate packets per second based on processor stats
         try:
             total_processed = processor_stats.get('total_processed', 0)
             start_time = processor_stats.get('start_time', 0)
@@ -265,7 +248,7 @@ class Firewall(QObject):
         result = self.rule_manager.add_ip_to_blacklist(ip)
         if result:
             self._update_analyzer_rules()
-            logger.info(f"IP {ip} added to blacklist.")
+            # logger.info(f"IP {ip} added to blacklist.") # RuleManager logs this
         return result
 
     def remove_ip_from_blacklist(self, ip: str) -> bool:
@@ -273,7 +256,7 @@ class Firewall(QObject):
         result = self.rule_manager.remove_ip_from_blacklist(ip)
         if result:
             self._update_analyzer_rules()
-            logger.info(f"IP {ip} removed from blacklist.")
+            # logger.info(f"IP {ip} removed from blacklist.")
         return result
 
     def add_ip_to_whitelist(self, ip: str) -> bool:
@@ -281,7 +264,7 @@ class Firewall(QObject):
         result = self.rule_manager.add_ip_to_whitelist(ip)
         if result:
             self._update_analyzer_rules()
-            logger.info(f"IP {ip} added to whitelist.")
+            # logger.info(f"IP {ip} added to whitelist.")
         return result
 
     def remove_ip_from_whitelist(self, ip: str) -> bool:
@@ -289,7 +272,7 @@ class Firewall(QObject):
         result = self.rule_manager.remove_ip_from_whitelist(ip)
         if result:
             self._update_analyzer_rules()
-            logger.info(f"IP {ip} removed from whitelist.")
+            # logger.info(f"IP {ip} removed from whitelist.")
         return result
 
     def add_port_to_blacklist(self, port: Union[int, str]) -> bool:
@@ -297,7 +280,7 @@ class Firewall(QObject):
         result = self.rule_manager.add_port_to_blacklist(port)
         if result:
             self._update_analyzer_rules()
-            logger.info(f"Port/range {port} added to blacklist.")
+            # logger.info(f"Port/range {port} added to blacklist.")
         return result
 
     def remove_port_from_blacklist(self, port: Union[int, str]) -> bool:
@@ -305,7 +288,7 @@ class Firewall(QObject):
         result = self.rule_manager.remove_port_from_blacklist(port)
         if result:
             self._update_analyzer_rules()
-            logger.info(f"Port/range {port} removed from blacklist.")
+            # logger.info(f"Port/range {port} removed from blacklist.")
         return result
 
     def add_port_to_whitelist(self, port: Union[int, str]) -> bool:
@@ -313,7 +296,7 @@ class Firewall(QObject):
         result = self.rule_manager.add_port_to_whitelist(port)
         if result:
             self._update_analyzer_rules()
-            logger.info(f"Port/range {port} added to whitelist.")
+            # logger.info(f"Port/range {port} added to whitelist.")
         return result
 
     def remove_port_from_whitelist(self, port: Union[int, str]) -> bool:
@@ -321,7 +304,7 @@ class Firewall(QObject):
         result = self.rule_manager.remove_port_from_whitelist(port)
         if result:
             self._update_analyzer_rules()
-            logger.info(f"Port/range {port} removed from whitelist.")
+            # logger.info(f"Port/range {port} removed from whitelist.")
         return result
 
     def add_content_filter(self, pattern: str) -> bool:
@@ -329,7 +312,7 @@ class Firewall(QObject):
         result = self.rule_manager.add_content_filter(pattern)
         if result:
             self._update_analyzer_rules()
-            logger.info(f"Content filter '{pattern}' added.")
+            # logger.info(f"Content filter '{pattern}' added.")
         return result
 
     def remove_content_filter(self, pattern: str) -> bool:
@@ -337,7 +320,7 @@ class Firewall(QObject):
         result = self.rule_manager.remove_content_filter(pattern)
         if result:
             self._update_analyzer_rules()
-            logger.info(f"Content filter '{pattern}' removed.")
+            # logger.info(f"Content filter '{pattern}' removed.")
         return result
 
     def set_protocol_filter(self, protocol: str, enabled: bool) -> bool:
@@ -345,10 +328,5 @@ class Firewall(QObject):
         result = self.rule_manager.set_protocol_filter(protocol, enabled)
         if result:
              self._update_analyzer_rules()
-             logger.info(f"{protocol.upper()} filter set to {enabled}.")
+             # logger.info(f"{protocol.upper()} filter set to {enabled}.") # RuleManager logs this
         return result
-
-    # TODO: Adapt diagnosis logic if needed
-    # def _get_diagnosis(self) -> Dict:
-    #    # Combine diagnosis from interceptor/analyzer/processor if they provide it
-    #    pass

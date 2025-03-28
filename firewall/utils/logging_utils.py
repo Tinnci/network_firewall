@@ -7,6 +7,9 @@ import logging.handlers
 import atexit
 from PyQt6.QtCore import QObject, pyqtSignal
 
+# Import config
+from ..config import CONFIG
+
 # --- Signal Handler for UI ---
 class SignalHandler(logging.Handler, QObject):
     """Custom logging handler that emits a signal."""
@@ -71,38 +74,45 @@ def setup_logging() -> SignalHandler:
     """
     global _signal_handler_instance
     
-    LOG_DIR = "logs"
-    LOG_FILE = os.path.join(LOG_DIR, "firewall.log")
-    os.makedirs(LOG_DIR, exist_ok=True)
+    # Get config values
+    log_cfg = CONFIG['logging']
+    log_dir = log_cfg.get("log_dir", "logs")
+    log_filename = log_cfg.get("log_filename", "firewall.log")
+    log_file = os.path.join(log_dir, log_filename)
+    os.makedirs(log_dir, exist_ok=True)
 
-    # Define log format
-    log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # Define log format from config
+    log_format = log_cfg.get("format", '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    log_formatter = logging.Formatter(log_format)
 
     # Get root logger and set level to DEBUG to capture everything
     root_logger = logging.getLogger()
-    # Clear existing handlers to avoid duplicates if script is re-run or module reloaded
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
     root_logger.setLevel(logging.DEBUG) # Capture all levels
 
-    # Create Rotating File Handler
+    # Create Rotating File Handler using config values
+    max_bytes = log_cfg.get("max_bytes", 10 * 1024 * 1024)
+    backup_count = log_cfg.get("backup_count", 5)
     file_handler = logging.handlers.RotatingFileHandler(
-        LOG_FILE,
-        maxBytes=10*1024*1024, # 10 MB
-        backupCount=5,
+        log_file,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
         encoding='utf-8'
     )
-    file_handler.setLevel(logging.INFO) # File logs INFO and above
+    file_level = log_cfg.get("file_level", logging.INFO)
+    file_handler.setLevel(file_level) 
     file_handler.setFormatter(log_formatter)
     root_logger.addHandler(file_handler)
 
-    # Create Signal Handler instance
+    # Create Signal Handler instance using config values
     signal_handler = SignalHandler()
-    signal_handler.setLevel(logging.DEBUG) # UI receives DEBUG and above
+    signal_level = log_cfg.get("signal_level", logging.DEBUG)
+    signal_handler.setLevel(signal_level) 
     signal_handler.setFormatter(log_formatter)
-    root_logger.addHandler(signal_handler) # Add signal handler to root logger
+    root_logger.addHandler(signal_handler) 
     
-    # 存储信号处理器实例到全局变量
+    # Store the handler instance globally
     _signal_handler_instance = signal_handler
     
     # 注册退出时的清理函数
