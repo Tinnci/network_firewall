@@ -30,8 +30,6 @@ class RuleManager:
                 self.rules = self._load_rules()
             except Exception as e:
                 logger.error(f"加载规则文件失败: {e}, 使用默认规则")
-                # print(f"加载规则文件失败: {e}") # Replaced with logger
-                # print("使用默认规则") # Replaced with logger
                 
         # TODO: 添加规则版本控制功能 (Lower Priority)
         # TODO: 添加规则备份和恢复功能 (Lower Priority)
@@ -77,7 +75,6 @@ class RuleManager:
                 return rules
         except Exception as e:
             logger.error(f"加载规则文件时出错: {e}")
-            # print(f"加载规则文件出错: {e}") # Replaced with logger
             return self._load_default_rules()
             
         # TODO: 添加规则格式错误处理 (Partially done in _validate_loaded_rules)
@@ -116,7 +113,6 @@ class RuleManager:
             return True
         except Exception as e:
             logger.error(f"保存规则文件时出错: {e}")
-            # print(f"保存规则文件出错: {e}") # Replaced with logger
             return False
             
         # TODO: 添加规则保存自动备份功能 (Lower Priority)
@@ -165,9 +161,7 @@ class RuleManager:
             # 保存更新后的规则
             return self.save_rules()
         except Exception as e:
-            print(f"更新规则失败: {e}")
             logger.error(f"更新规则失败: {e}")
-            # print(f"更新规则失败: {e}") # Replaced with logger
             return False
             
     def _is_valid_ip_or_cidr(self, ip_str: str) -> bool:
@@ -284,7 +278,6 @@ class RuleManager:
                 return True # Already exists, consider it success
         except Exception as e:
             logger.error(f"添加IP到黑名单时出错: {e}")
-            # print(f"添加IP到黑名单失败: {e}") # Replaced with logger
             return False
             
     def remove_ip_from_blacklist(self, ip: str) -> bool:
@@ -306,7 +299,6 @@ class RuleManager:
             return True
         except Exception as e:
             logger.error(f"从黑名单移除IP时出错: {e}")
-            # print(f"从黑名单移除IP失败: {e}") # Replaced with logger
             return False
             
     def add_ip_to_whitelist(self, ip: str) -> bool:
@@ -332,7 +324,6 @@ class RuleManager:
                 return True # Already exists, consider it success
         except Exception as e:
             logger.error(f"添加IP到白名单时出错: {e}")
-            # print(f"添加IP到白名单失败: {e}") # Replaced with logger
             return False
             
     def remove_ip_from_whitelist(self, ip: str) -> bool:
@@ -354,7 +345,6 @@ class RuleManager:
             return True
         except Exception as e:
             logger.error(f"从白名单移除IP时出错: {e}")
-            # print(f"从白名单移除IP失败: {e}") # Replaced with logger
             return False
             
     def export_ip_list(self, list_type: str, filename: str) -> bool:
@@ -458,7 +448,6 @@ class RuleManager:
                 return True # Already exists
         except Exception as e:
             logger.error(f"添加端口/范围到黑名单时出错: {e}")
-            # print(f"添加端口到黑名单失败: {e}") # Replaced with logger
             return False
             
     def remove_port_from_blacklist(self, port: int) -> bool:
@@ -481,7 +470,6 @@ class RuleManager:
             return True
         except Exception as e:
             logger.error(f"从黑名单移除端口/范围时出错: {e}")
-            # print(f"从黑名单移除端口失败: {e}") # Replaced with logger
             return False
             
     def add_port_to_whitelist(self, port: int) -> bool:
@@ -508,7 +496,6 @@ class RuleManager:
                 return True # Already exists
         except Exception as e:
             logger.error(f"添加端口/范围到白名单时出错: {e}")
-            # print(f"添加端口到白名单失败: {e}") # Replaced with logger
             return False
             
     def remove_port_from_whitelist(self, port: int) -> bool:
@@ -531,7 +518,6 @@ class RuleManager:
             return True
         except Exception as e:
             logger.error(f"从白名单移除端口/范围时出错: {e}")
-            # print(f"从白名单移除端口失败: {e}") # Replaced with logger
             return False
             
     # TODO: 添加端口分组管理功能 (Lower Priority)
@@ -561,7 +547,6 @@ class RuleManager:
             return False
         except Exception as e:
             logger.error(f"添加内容过滤规则时出错: {e}")
-            # print(f"添加内容过滤规则失败: {e}") # Replaced with logger
             return False
             
     def remove_content_filter(self, pattern: str) -> bool:
@@ -582,7 +567,6 @@ class RuleManager:
             return True
         except Exception as e:
             logger.error(f"移除内容过滤规则时出错: {e}")
-            # print(f"移除内容过滤规则失败: {e}") # Replaced with logger
             return False
             
     # TODO: 添加高级模式匹配功能 (Lower Priority)

@@ -77,15 +77,17 @@ class PacketFilter:
         
         # 自适应策略
         self.adaptive_settings = {
-            'use_batch_mode': True,        # 是否使用批量接收模式 (Added)
-            'use_queue_model': False,       # 是否使用队列模型 (Added)
-            'skip_local_packets': True,    # 跳过本地大数据包处理
-            'skip_large_packets': False,   # 跳过所有大数据包
-            'large_packet_threshold': 1460, # 大数据包阈值
-            'batch_size': 5,              # 批量处理大小
-            'batch_wait_time': 100,       # 批量等待时间(ms)
-            'use_packet_pool': True,      # 是否使用对象池
-            'allow_private_network': True, # 是否允许本地网络通信
+            'use_batch_mode': True,          # 是否使用批量接收模式
+            'use_queue_model': False,        # 是否使用队列模型
+            'num_workers': 2,                # 工作线程数
+            'packet_pool_size': 100,         # 数据包对象池大小
+            'skip_local_packets': True,      # 是否跳过本地数据包
+            'skip_large_packets': False,     # 是否跳过大型数据包
+            'large_packet_threshold': 1460,  # 大型数据包阈值(字节)
+            'batch_size': 5,                 # 批处理大小
+            'batch_wait_time': 100,          # 批处理等待时间(毫秒)
+            'use_packet_pool': True,         # 是否使用数据包对象池
+            'allow_private_network': True,   # 允许本地网络通信
         }
         
         # 数据包类型统计
@@ -113,11 +115,11 @@ class PacketFilter:
         # TODO: 添加流量分析模块，实现异常流量监测 (Lower Priority)
     
     def start(self):
-        """启动数据包过滤"""
+        """Start the packet filter"""
         if self.running:
             return
         
-        logger.info("正在启动数据包过滤器...")
+        logger.info("Starting packet filter...")
         
         # 仅在首次启动或系统信息未记录时记录系统信息
         if not self.system_info_logged:
@@ -163,8 +165,10 @@ class PacketFilter:
             self._configure_windivert_params()
             
             # 记录启动信息
-            logger.info("数据包过滤器已启动")
-            logger.info(f"自适应策略配置: {self.adaptive_settings}")
+            logger.info("WinDivert queue length set to 8192, queue time to 2000ms")
+            logger.info("Packet filter started")
+            logger.info(f"Adaptive settings configuration: {self.adaptive_settings}")
+            logger.info("Packet processing thread started")
             
             # 初始化统计时间
             self.stats["start_time"] = time.time()
@@ -194,18 +198,18 @@ class PacketFilter:
         # TODO: 添加多网卡支持功能 (Lower Priority)
     
     def stop(self):
-        """停止数据包过滤"""
+        """Stop the packet filter"""
         if not self.running:
             return True
             
         self.running = False
-        logger.info("正在停止数据包过滤器...")
+        logger.info("Stopping packet filter...")
         
         # 关闭WinDivert句柄
         if self.divert:
             try:
                 self.divert.close()
-                logger.info("已关闭WinDivert句柄")
+                logger.info("WinDivert handle closed")
             except Exception as e:
                 logger.error(f"关闭WinDivert句柄时出错: {e}")
             
@@ -219,108 +223,82 @@ class PacketFilter:
             worker.join(timeout=0.5)
         self.worker_threads = []
         
-        logger.info("数据包过滤器已停止")
+        logger.info("Packet filter stopped")
         return True
     
     def _packet_handler(self):
-        """数据包处理主循环"""
+        """数据包处理主线程，处理接收到的数据包"""
         error_count = 0
-        error_limit = 50  # 最多记录50个错误
+        error_limit = 100  # 最多允许连续错误次数
         consecutive_errors = 0  # 连续错误计数
-        max_consecutive_errors = 10  # 最大连续错误数
+        batch = []  # 数据包批处理队列
         
-        # 错误类型计数，避免同类错误重复记录
-        error_type_counts = {}
-        max_error_per_type = 5  # 每类错误最多记录5条
-        
-        logger.info("数据包处理线程已启动")
+        # 创建性能计数器
+        last_stats_time = time.time()
+        packets_since_last_stats = 0
         
         while self.running:
             try:
-                # 检查系统资源
-                self._monitor_resources()
-                
-                # 决定是单包接收还是批量接收
+                # 批量处理模式，提高效率
                 if self.adaptive_settings.get('use_batch_mode', True):
-                    # 批量接收数据包
-                    try:
-                        # 使用Divert1.3的批量接收功能
-                        batch_size = self.adaptive_settings['batch_size']
-                        wait_time = self.adaptive_settings['batch_wait_time']
-                        
-                        # 实现批量接收
-                        packets = []
-                        start_time = time.time()
-                        while len(packets) < batch_size and (time.time() - start_time) * 1000 < wait_time:
-                            try:
-                                packet = self.divert.recv(timeout=int(wait_time / batch_size))
-                                if packet:
-                                    packets.append(packet)
-                            except Exception as recv_err:
-                                if "timeout" in str(recv_err).lower():
-                                    # 超时是正常的，继续收集
-                                    continue
-                                else:
-                                    # 其他错误需要记录
-                                    logger.error(f"批量接收数据包时出错: {recv_err}")
-                                    break
-                                    
-                        # 处理收集到的数据包
-                        if packets:
-                            logger.debug(f"批量接收到 {len(packets)} 个数据包")
-                            self.stats["batch_processed"] += len(packets)
-                            self.packet_type_stats['batched_packets'] += len(packets)
-                            
-                            for packet in packets:
-                                self._process_single_packet(packet, error_count, error_limit, consecutive_errors)
-                                consecutive_errors = 0  # 成功处理后重置连续错误计数
-                    except Exception as batch_err:
-                        logger.error(f"批量处理过程出错: {batch_err}")
-                        # 出错时退回到单包处理模式
-                        self.adaptive_settings['use_batch_mode'] = False
-                        logger.warning("已禁用批量处理模式，切换到单包处理")
+                    # 接收数据包批次
+                    batch = []
+                    batch_size = self.adaptive_settings.get('batch_size', 5)
+                    batch_wait = self.adaptive_settings.get('batch_wait_time', 100) / 1000  # 转换为秒
+                    
+                    # 使用超时避免无限等待
+                    start_time = time.time()
+                    while len(batch) < batch_size and time.time() - start_time < batch_wait:
+                        packet = self.divert.recv()
+                        if packet:
+                            batch.append(packet)
+                        else:
+                            # 短暂等待减少CPU使用
+                            time.sleep(0.001)
+                    
+                    # 处理批次中的数据包
+                    for packet in batch:
+                        self._process_single_packet(packet, error_count, error_limit, consecutive_errors)
+                        packets_since_last_stats += 1
                 else:
-                    # 单包接收和处理
+                    # 单包处理模式
                     packet = self.divert.recv()
-                    self._process_single_packet(packet, error_count, error_limit, consecutive_errors)
-                    consecutive_errors = 0  # 成功处理后重置连续错误计数
+                    if packet:
+                        self._process_single_packet(packet, error_count, error_limit, consecutive_errors)
+                        packets_since_last_stats += 1
+                    else:
+                        # 短暂等待减少CPU使用
+                        time.sleep(0.001)
                 
-                # 周期性检查和调整策略
-                if self.stats["total_packets"] % 1000 == 0:
-                    self._adjust_adaptive_settings()
-                    self._adjust_logging_level()
+                # 每5秒记录一次性能统计
+                current_time = time.time()
+                if current_time - last_stats_time >= 5:
+                    elapsed = current_time - last_stats_time
+                    packets_per_second = packets_since_last_stats / elapsed
+                    self.stats["packet_rate"] = packets_per_second
+                    logger.debug(f"Processing rate: {packets_per_second:.2f} packets/sec")
+                    last_stats_time = current_time
+                    packets_since_last_stats = 0
+                    
+                # 重置连续错误计数
+                consecutive_errors = 0
                 
             except Exception as e:
-                if self.running:  # 只有在运行状态才打印错误
-                    consecutive_errors += 1
+                error_count += 1
+                consecutive_errors += 1
+                logger.error(f"Error in packet handler: {e}")
+                
+                # 连续错误过多时休息一下
+                if consecutive_errors > 5:
+                    time.sleep(0.1)  # 短暂休息减轻系统负载
                     
-                    # 错误类型统计和日志控制
-                    error_type = type(e).__name__
-                    if error_type not in error_type_counts:
-                        error_type_counts[error_type] = 0
-                    error_type_counts[error_type] += 1
-                    
-                    if error_type_counts[error_type] <= max_error_per_type:
-                        # 只打印前几次错误，避免日志爆炸
-                        logger.error(f"处理数据包时出错: {e}")
-                    elif error_type_counts[error_type] == max_error_per_type + 1:
-                        # 第max_error_per_type+1次报错时，提示后续错误将被抑制
-                        logger.warning(f"错误类型 {error_type} 已达到最大记录次数，后续相同错误将被抑制")
-                    elif error_type_counts[error_type] % 100 == 0:
-                        # 每100次报错提示一次当前计数
-                        logger.warning(f"错误类型 {error_type} 已发生 {error_type_counts[error_type]} 次")
-                    
-                    # 连续错误过多时考虑重启服务
-                    if consecutive_errors > max_consecutive_errors * 2:
-                        logger.critical(f"检测到过多连续错误({consecutive_errors}个)，尝试重启WinDivert")
-                        self._restart_windivert()
-                        consecutive_errors = 0  # 重启后重置错误计数
-                        
-                    # 暂停一小段时间，避免错误循环消耗CPU
-                    time.sleep(0.1)
-                    
-        # TODO: 添加更智能的错误处理机制 (Lower Priority)
-        # TODO: 添加错误自动恢复策略 (Lower Priority)
+                # 错误过多时尝试重启WinDivert
+                if error_count > error_limit:
+                    logger.error(f"Too many errors ({error_count}), attempting to restart WinDivert...")
+                    self._restart_windivert()
+                    error_count = 0
+                
+        logger.info("Packet handler thread exiting")
     
     def _process_single_packet(self, packet, error_count, error_limit, consecutive_errors):
         """处理单个数据包的主逻辑"""
@@ -1024,29 +1002,61 @@ class PacketFilter:
             return True
         return False
         
-    def add_port_to_blacklist(self, port: str) -> bool: # Changed to str
-        """添加端口到黑名单"""
+    def add_port_to_blacklist(self, port) -> bool:
+        """添加端口到黑名单
+        
+        Args:
+            port: 端口号或端口范围字符串
+            
+        Returns:
+            bool: 是否添加成功
+        """
+        port_str = str(port)  # 确保转换为字符串
         # Validation should be done by RuleManager
-        self.port_blacklist.add(port)
+        self.port_blacklist.add(port_str)
         return True
             
-    def remove_port_from_blacklist(self, port: str) -> bool: # Changed to str
-        """从黑名单移除端口"""
-        if port in self.port_blacklist:
-            self.port_blacklist.remove(port)
+    def remove_port_from_blacklist(self, port) -> bool:
+        """从黑名单移除端口
+        
+        Args:
+            port: 端口号或端口范围字符串
+            
+        Returns:
+            bool: 是否移除成功
+        """
+        port_str = str(port)  # 确保转换为字符串
+        if port_str in self.port_blacklist:
+            self.port_blacklist.remove(port_str)
             return True
         return False
         
-    def add_port_to_whitelist(self, port: str) -> bool: # Changed to str
-        """添加端口到白名单"""
+    def add_port_to_whitelist(self, port) -> bool:
+        """添加端口到白名单
+        
+        Args:
+            port: 端口号或端口范围字符串
+            
+        Returns:
+            bool: 是否添加成功
+        """
+        port_str = str(port)  # 确保转换为字符串
         # Validation should be done by RuleManager
-        self.port_whitelist.add(port)
+        self.port_whitelist.add(port_str)
         return True
             
-    def remove_port_from_whitelist(self, port: str) -> bool: # Changed to str
-        """从白名单移除端口"""
-        if port in self.port_whitelist:
-            self.port_whitelist.remove(port)
+    def remove_port_from_whitelist(self, port) -> bool:
+        """从白名单移除端口
+        
+        Args:
+            port: 端口号或端口范围字符串
+            
+        Returns:
+            bool: 是否移除成功
+        """
+        port_str = str(port)  # 确保转换为字符串
+        if port_str in self.port_whitelist:
+            self.port_whitelist.remove(port_str)
             return True
         return False
         

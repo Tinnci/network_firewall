@@ -135,24 +135,38 @@ class Firewall:
     def _apply_performance_settings(self):
         """将性能设置应用到过滤器"""
         logger.debug("Applying performance settings to PacketFilter...")
+        
+        # 确保 packet_filter 有 adaptive_settings 属性
+        if not hasattr(self.packet_filter, 'adaptive_settings'):
+            self.packet_filter.adaptive_settings = {}
+            logger.warning("Created missing adaptive_settings dictionary in packet_filter")
+        
         # 复制设置到过滤器的自适应设置
         for key, value in self.performance_settings.items():
-            if hasattr(self.packet_filter, 'adaptive_settings') and key in self.packet_filter.adaptive_settings:
-                 self.packet_filter.adaptive_settings[key] = value
-                 logger.debug(f"Set adaptive_settings['{key}'] = {value}")
+            if key in self.packet_filter.adaptive_settings:
+                self.packet_filter.adaptive_settings[key] = value
+                logger.debug(f"Set adaptive_settings['{key}'] = {value}")
             else:
-                 # Downgrade log level as keys are expected to exist now after packet_filter fix
-                 logger.debug(f"Key '{key}' not found in packet_filter.adaptive_settings (This might be okay if handled elsewhere)")
+                # 如果键不存在，则添加它
+                self.packet_filter.adaptive_settings[key] = value
+                logger.debug(f"Added missing key adaptive_settings['{key}'] = {value}")
 
         # 设置工作线程数
         if hasattr(self.packet_filter, 'num_workers'):
             self.packet_filter.num_workers = self.performance_settings.get('num_workers', 2)
             logger.debug(f"Set num_workers = {self.packet_filter.num_workers}")
+        else:
+            self.packet_filter.num_workers = self.performance_settings.get('num_workers', 2)
+            logger.debug(f"Created num_workers = {self.packet_filter.num_workers}")
 
         # 设置对象池大小
         if hasattr(self.packet_filter, 'MAX_POOL_SIZE'):
             self.packet_filter.MAX_POOL_SIZE = self.performance_settings.get('packet_pool_size', 100)
             logger.debug(f"Set MAX_POOL_SIZE = {self.packet_filter.MAX_POOL_SIZE}")
+        else:
+            self.packet_filter.MAX_POOL_SIZE = self.performance_settings.get('packet_pool_size', 100)
+            logger.debug(f"Created MAX_POOL_SIZE = {self.packet_filter.MAX_POOL_SIZE}")
+        
         logger.debug("Performance settings applied.")
 
     def update_performance_settings(self, new_settings: Dict) -> bool:
