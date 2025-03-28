@@ -42,7 +42,7 @@ DEFAULT_INTERCEPTOR_CONFIG = {
 }
 
 DEFAULT_UI_CONFIG = {
-    "log_max_rows": 500,
+    "log_max_rows": 500, # Default max rows for the log table in UI
     "status_update_interval": 1000, # ms
 }
 
@@ -68,7 +68,7 @@ def load_config_from_file(filepath: str = "config.yaml") -> Dict:
         "rules": DEFAULT_RULES_CONFIG.copy(),
         "performance": DEFAULT_PERFORMANCE_CONFIG.copy(),
         "interceptor": DEFAULT_INTERCEPTOR_CONFIG.copy(),
-        "ui": DEFAULT_UI_CONFIG.copy(),
+        "ui": DEFAULT_UI_CONFIG.copy(), # Add UI defaults
     }
 
     try:

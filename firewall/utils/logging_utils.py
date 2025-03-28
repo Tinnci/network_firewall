@@ -5,15 +5,16 @@ import os
 import logging
 import logging.handlers
 import atexit
+import datetime
 from PyQt6.QtCore import QObject, pyqtSignal
 
 # Import config
 from ..config import CONFIG
-
 # --- Signal Handler for UI ---
 class SignalHandler(logging.Handler, QObject):
-    """Custom logging handler that emits a signal."""
-    log_signal = pyqtSignal(str)
+    """Custom logging handler that emits a dictionary signal."""
+    # Changed signal type from str to dict
+    log_signal = pyqtSignal(dict)
 
     def __init__(self, level=logging.NOTSET):
         super().__init__(level)
@@ -21,10 +22,26 @@ class SignalHandler(logging.Handler, QObject):
         # 设置属性以防止在关闭时flush
         self.flushOnClose = False
         
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord):
+        """Emit a dictionary containing structured log information."""
         try:
-            msg = self.format(record)
-            self.log_signal.emit(msg)
+            log_entry = {
+                # Standard fields
+                "timestamp": getattr(record, 'asctime', datetime.datetime.fromtimestamp(record.created).strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]), # Use formatted time if available, else create it
+                "name": record.name,
+                "levelno": record.levelno,
+                "levelname": record.levelname,
+                "message": record.getMessage(), # Get the formatted message
+                "pathname": record.pathname,
+                "lineno": record.lineno,
+                # Potential custom fields from 'extra'
+                "log_type": getattr(record, 'log_type', 'general'), # Default to 'general'
+                "packet_info": getattr(record, 'packet_info', None), # Will be None if not provided
+            }
+            # Add formatted full message for potential fallback display
+            log_entry["formatted_message"] = self.format(record)
+
+            self.log_signal.emit(log_entry)
         except Exception:
             self.handleError(record)
             

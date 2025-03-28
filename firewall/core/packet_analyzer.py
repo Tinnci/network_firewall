@@ -95,11 +95,19 @@ class PacketAnalyzer:
                 logger.debug("Passing non-TCP/UDP packet.")
                 return True # Pass non-TCP/UDP packets by default
 
+            packet_details_base = self.get_packet_info(packet) # Get base info once
+
             if is_tcp and not self.protocol_filter.get("tcp", True):
-                logger.debug("Blocking TCP packet due to protocol filter.")
+                action = "拦截"
+                reason = "Protocol Filter (TCP)"
+                packet_details = {**packet_details_base, 'action': action, 'reason': reason}
+                logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
                 return False
             if is_udp and not self.protocol_filter.get("udp", True):
-                logger.debug("Blocking UDP packet due to protocol filter.")
+                action = "拦截"
+                reason = "Protocol Filter (UDP)"
+                packet_details = {**packet_details_base, 'action': action, 'reason': reason}
+                logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
                 return False
 
             # 2. IP Address Filtering
@@ -119,12 +127,19 @@ class PacketAnalyzer:
 
             # Whitelist check (higher priority)
             if self._check_ip_rules(src_ip, self.ip_whitelist) or self._check_ip_rules(dst_ip, self.ip_whitelist):
-                # logger.debug(f"Passing packet due to IP whitelist match: {src_ip} or {dst_ip}")
+                action = "放行"
+                reason = "IP Whitelist"
+                packet_details = {**packet_details_base, 'action': action, 'reason': reason}
+                # Optional: Log whitelisted packets if needed for debugging, but might be noisy
+                # logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
                 return True
 
             # Blacklist check
             if self._check_ip_rules(src_ip, self.ip_blacklist) or self._check_ip_rules(dst_ip, self.ip_blacklist):
-                logger.debug(f"Blocking packet due to IP blacklist match: {src_ip} or {dst_ip}")
+                action = "拦截"
+                reason = f"IP Blacklist ({src_ip if self._check_ip_rules(src_ip, self.ip_blacklist) else dst_ip})"
+                packet_details = {**packet_details_base, 'action': action, 'reason': reason}
+                logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
                 return False
 
             # 3. Port Filtering
@@ -137,12 +152,19 @@ class PacketAnalyzer:
 
             # Whitelist check (higher priority)
             if self._check_port_rules(src_port, self.port_whitelist) or self._check_port_rules(dst_port, self.port_whitelist):
-                # logger.debug(f"Passing packet due to port whitelist match: {src_port} or {dst_port}")
+                action = "放行"
+                reason = "Port Whitelist"
+                packet_details = {**packet_details_base, 'action': action, 'reason': reason}
+                # Optional: Log whitelisted packets if needed for debugging
+                # logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
                 return True
 
             # Blacklist check
             if self._check_port_rules(src_port, self.port_blacklist) or self._check_port_rules(dst_port, self.port_blacklist):
-                logger.debug(f"Blocking packet due to port blacklist match: {src_port} or {dst_port}")
+                action = "拦截"
+                reason = f"Port Blacklist ({src_port if self._check_port_rules(src_port, self.port_blacklist) else dst_port})"
+                packet_details = {**packet_details_base, 'action': action, 'reason': reason}
+                logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
                 return False
 
             # 4. Content Filtering (using compiled regex on bytes)
@@ -152,13 +174,22 @@ class PacketAnalyzer:
                     for pattern in self.compiled_content_filters:
                         try:
                             if pattern.search(payload):
-                                logger.info(f"Blocking packet due to content filter match: {pattern.pattern.decode('utf-8', 'ignore')}")
+                                action = "拦截"
+                                reason = f"Content Filter ({pattern.pattern.decode('utf-8', 'ignore')})"
+                                packet_details = {**packet_details_base, 'action': action, 'reason': reason}
+                                # Log content filter blocks at INFO level as they might be significant
+                                logger.info(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
                                 return False
                         except Exception as search_err:
                              logger.error(f"Error during content filter search with pattern '{pattern.pattern.decode('utf-8', 'ignore')}': {search_err}")
 
 
             # 5. Default Action: Pass
+            # Log default passes only if debug level is very low, or not at all to reduce noise
+            # action = "放行"
+            # reason = "Default Action"
+            # packet_details = {**packet_details_base, 'action': action, 'reason': reason}
+            # logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
             return True
 
         except Exception as e:
