@@ -46,6 +46,8 @@ class Firewall:
             'skip_large_packets': False,     # 是否跳过大型数据包
             'large_packet_threshold': 1460,  # 大型数据包阈值(字节)
             'allow_private_network': True,   # 允许本地网络通信
+            'batch_size': 5,                 # 批处理大小
+            'batch_wait_time': 100,          # 批处理等待时间(毫秒)
         }
         
     def start(self) -> bool:
@@ -430,17 +432,47 @@ class Firewall:
         
     # 协议过滤管理
     def set_protocol_filter(self, protocol: str, enabled: bool) -> bool:
-        """设置协议过滤规则
+        """设置协议过滤
         
         Args:
-            protocol: 协议名称（tcp/udp）
+            protocol: 协议名称(tcp/udp)
             enabled: 是否启用
             
         Returns:
             bool: 是否设置成功
         """
-        result = self.rule_manager.set_protocol_filter(protocol, enabled)
-        if result and self.is_running:
-            self.packet_filter.set_protocol_filter(protocol, enabled)
-            self._add_log(f"设置{protocol.upper()}协议过滤: {'启用' if enabled else '禁用'}")
-        return result 
+        if protocol.lower() not in ['tcp', 'udp']:
+            return False
+            
+        # 更新规则管理器
+        rules = self.rule_manager.get_rules()
+        rules['protocol_filter'][protocol.lower()] = enabled
+        self.rule_manager.save_rules(rules)
+        
+        # 如果防火墙正在运行，更新过滤器
+        if self.is_running:
+            self.packet_filter.protocol_filter[protocol.lower()] = enabled
+            self._add_log(f"已{'启用' if enabled else '禁用'} {protocol.upper()} 协议过滤")
+            
+        return True
+        
+    def update_performance_settings(self, new_settings: Dict) -> bool:
+        """更新性能设置
+        
+        Args:
+            new_settings: 新的性能设置
+            
+        Returns:
+            bool: 是否更新成功
+        """
+        # 更新设置
+        for key, value in new_settings.items():
+            if key in self.performance_settings:
+                self.performance_settings[key] = value
+        
+        # 如果防火墙正在运行，应用新设置
+        if self.is_running:
+            self._apply_performance_settings()
+            self._add_log("已更新性能设置")
+            
+        return True 

@@ -118,7 +118,7 @@ class PacketFilter:
     def start(self):
         """启动数据包过滤"""
         if self.running:
-            return
+            return True
         
         logger.info("正在启动数据包过滤器...")
         
@@ -129,34 +129,38 @@ class PacketFilter:
         # 预编译内容过滤规则
         self.compiled_filters = [re.compile(pattern) for pattern in self.content_filters]
         
-        # 构建更精确的过滤规则，按照API文档正确构建过滤器语法
-        # 过滤TCP和UDP流量，排除本地回环流量
+        # 构建符合WinDivert语法的过滤器字符串
         filter_string = "tcp or udp"
         
         try:
-            # 验证过滤器语法正确性
+            # 验证过滤器语法正确性 - 使用PyDivert API标准方法
             check_result = pydivert.WinDivert.check_filter(filter_string)
             if not check_result[0]:
                 logger.error(f"过滤器语法错误: {check_result[2]} 位置: {check_result[1]}")
                 return False
-                
-            # 创建WinDivert对象
-            self.divert = pydivert.WinDivert(filter_string)
+            
+            # 记录过滤器
             logger.debug(f"使用过滤规则: {filter_string}")
             
-            # 设置WinDivert参数
-            self._configure_windivert_params()
+            # 创建WinDivert对象 - 按照API文档标准创建
+            self.divert = pydivert.WinDivert(
+                filter=filter_string,        # 过滤器字符串
+                layer=pydivert.Layer.NETWORK # 在网络层拦截数据包
+            )
             
-            # 使用API正确打开WinDivert句柄    
+            # 使用API打开WinDivert句柄
             self.divert.open()
             self.running = True
             
-            # 记录关键信息
-            logger.info(f"WinDivert对象: {self.divert}")
-            logger.info("数据包过滤器已启动")
+            # 配置WinDivert参数
+            self._configure_windivert_params()
             
-            # 记录自适应策略配置
+            # 记录启动信息
+            logger.info("数据包过滤器已启动")
             logger.info(f"自适应策略配置: {self.adaptive_settings}")
+            
+            # 初始化统计时间
+            self.stats["start_time"] = time.time()
             
             # 启动工作线程
             if self.adaptive_settings.get('use_queue_model', False):
@@ -182,16 +186,20 @@ class PacketFilter:
     def stop(self):
         """停止数据包过滤"""
         if not self.running:
-            return
+            return True
             
         self.running = False
+        logger.info("正在停止数据包过滤器...")
         
+        # 关闭WinDivert句柄
         if self.divert:
             try:
                 self.divert.close()
-            except:
-                pass
+                logger.info("已关闭WinDivert句柄")
+            except Exception as e:
+                logger.error(f"关闭WinDivert句柄时出错: {e}")
             
+        # 等待主处理线程结束
         if self.thread:
             self.thread.join(timeout=1.0)
             self.thread = None
@@ -200,7 +208,10 @@ class PacketFilter:
         for worker in self.worker_threads:
             worker.join(timeout=0.5)
         self.worker_threads = []
-            
+        
+        logger.info("数据包过滤器已停止")
+        return True
+    
     def _packet_handler(self):
         """数据包处理主循环"""
         error_count = 0
@@ -410,85 +421,53 @@ class PacketFilter:
                 self.stats["error_packets"] += 1
                 return
             
-            # 根据数据包特性选择不同的发送策略
-            if hasattr(packet, 'is_loopback') and packet.is_loopback:
-                # 本地回环数据包处理策略 - 无需重计算校验和
-                try:
-                    # 根据API文档，正确使用recalculate_checksum参数
-                    self.divert.send(packet, recalculate_checksum=False)
-                    self.stats["passed_packets"] += 1
-                    return
-                except Exception as e:
-                    logger.error(f"发送本地回环数据包失败: {e}")
-                    raise e
-                    
-            elif hasattr(packet.ip, 'df') and packet.ip.df and len(packet.raw) > 1400:
-                # 大型带DF标记数据包策略 - 使用对齐缓冲区
-                try:
-                    self._send_with_aligned_buffer(packet)
-                    self.stats["passed_packets"] += 1
-                    return
-                except Exception as e:
-                    logger.error(f"发送大型DF数据包失败: {e}")
-                    raise e
-            
-            # 普通数据包处理流程
+            # 简化的数据包处理逻辑
             try:
-                # 重新计算校验和后再发送
-                if hasattr(packet, 'recalculate_checksums'):
+                # 根据数据包类型决定是否重新计算校验和
+                recalc_checksum = True
+                
+                # 本地回环数据包无需重新计算校验和
+                if hasattr(packet, 'is_loopback') and packet.is_loopback:
+                    recalc_checksum = False
+                
+                # 重新计算校验和
+                if recalc_checksum and hasattr(packet, 'recalculate_checksums'):
                     try:
-                        # 根据API文档使用recalculate_checksums方法
-                        # 该方法不需要任何参数即可重新计算所有校验和
                         packet.recalculate_checksums()
                     except Exception as chksum_err:
                         logger.warning(f"重新计算校验和失败: {chksum_err}")
-                        # 失败也继续尝试发送
                 
-                # 使用普通方式发送
-                self.divert.send(packet)
+                # 使用标准API发送数据包
+                self.divert.send(packet, recalculate_checksum=recalc_checksum)
                 self.stats["passed_packets"] += 1
-            except Exception as send_err:
-                # 记录更详细的错误信息
-                error_str = str(send_err)
-                logger.error(f"发送数据包失败，错误信息: {error_str}, 类型: {type(send_err)}")
                 
-                # 尝试二次修复并重新发送
-                if "[WinError 87]" in error_str and hasattr(packet, 'raw'):
-                    logger.warning(f"检测到WinError 87参数错误，尝试使用重建数据包方式规避")
+            except Exception as send_err:
+                # 处理WinError 87错误 - 简化错误处理逻辑
+                if "[WinError 87]" in str(send_err) and hasattr(packet, 'raw'):
+                    logger.warning("检测到WinError 87参数错误，尝试使用重建数据包方式规避")
                     try:
-                        # 创建新的数据包对象，根据API文档正确传递参数
+                        # 创建新的数据包对象
                         new_packet = pydivert.Packet(
                             packet.raw,
                             packet.interface,
                             packet.direction
                         )
-                        
-                        # 不计算校验和直接发送
+                        # 发送新数据包，不重新计算校验和
                         self.divert.send(new_packet, recalculate_checksum=False)
-                        logger.info("使用重建数据包方式成功发送")
                         self.stats["passed_packets"] += 1
                         self.stats["rebuild_success"] += 1
                     except Exception as rebuild_err:
+                        # 记录重建失败并增加统计
                         self.stats["rebuild_failure"] += 1
-                        logger.error(f"重建数据包失败: {rebuild_err}, 类型: {type(rebuild_err)}")
-                        
-                        # 尝试使用字节对齐缓冲区方法
-                        try:
-                            self._send_with_aligned_buffer(packet, recalculate_checksum=False)
-                            logger.info("使用字节对齐缓冲区方式成功发送")
-                            self.stats["passed_packets"] += 1
-                        except Exception as align_err:
-                            logger.error(f"使用字节对齐缓冲区发送失败: {align_err}")
-                            
-                            # 最后尝试 - 简单跳过该数据包
-                            logger.warning("使用跳过数据包方式处理WinError 87")
-                            self.stats["passed_packets"] += 1  # 虽然没实际发送，但不计入失败统计
+                        logger.error(f"重建并发送数据包失败: {rebuild_err}")
+                        # 将错误向上传递
+                        raise rebuild_err
                 else:
                     # 非WinError 87错误直接抛出
                     raise send_err
                     
         except Exception as e:
-            # 特定错误计数
+            # 错误统计
             if "[WinError 87]" in str(e):
                 self.stats["win_error_87_count"] += 1
             
@@ -1146,7 +1125,7 @@ class PacketFilter:
             # 2. 短暂等待系统资源释放
             time.sleep(1)
             
-            # 3. 创建新实例，使用与start方法相同的过滤器规则
+            # 3. 创建新实例，使用标准API参数
             filter_string = "tcp or udp"
             
             # 验证过滤器语法
@@ -1154,19 +1133,20 @@ class PacketFilter:
             if not check_result[0]:
                 logger.error(f"重启时过滤器语法错误: {check_result[2]} 位置: {check_result[1]}")
                 return False
-                
-            self.divert = pydivert.WinDivert(filter_string)
+            
+            # 使用标准API创建WinDivert实例    
+            self.divert = pydivert.WinDivert(
+                filter=filter_string,
+                layer=pydivert.Layer.NETWORK
+            )
             logger.info("已创建新的WinDivert实例")
             
-            # 4. 重新配置参数，但使用降级的错误处理
-            try:
-                self._configure_windivert_params()
-            except Exception as e:
-                logger.debug(f"重启后配置参数时出错: {e}")
-            
-            # 5. 重新打开
+            # 4. 打开WinDivert句柄
             self.divert.open()
-            logger.info("已成功重启WinDivert")
+            logger.info("已成功打开WinDivert句柄")
+            
+            # 5. 重新配置参数
+            self._configure_windivert_params()
             
             # 6. 重置错误计数
             self.stats["error_packets"] = 0
@@ -1180,6 +1160,7 @@ class PacketFilter:
             # 7. 调整自适应策略
             self._adjust_adaptive_settings()
             
+            logger.info("WinDivert实例已成功重启")
             return True
         except Exception as e:
             logger.error(f"重启WinDivert失败: {e}")
@@ -1331,149 +1312,89 @@ class PacketFilter:
             self.packet_pool.append(packet)
     
     def _diagnose_problem(self):
-        """诊断当前系统常见问题"""
+        """诊断WinDivert可能的问题并提供统计信息"""
         diagnosis = {
-            'win_error_87': False,
-            'memory_issue': False,
-            'driver_issue': False,
-            'network_overload': False,
+            'total_packets': self.stats.get('total_packets', 0),
+            'passed_packets': self.stats.get('passed_packets', 0),
+            'dropped_packets': self.stats.get('dropped_packets', 0),
+            'error_packets': self.stats.get('error_packets', 0),
+            'win_error_87_count': self.stats.get('win_error_87_count', 0),
+            'packet_types': self.packet_type_stats,
+            'error_types': self.error_tracking.get('error_types', {}),
+            'windivert_status': 'normal',
             'recommendations': []
         }
         
-        # 检查WinError 87问题
-        if self.stats["win_error_87_count"] > 50:
-            diagnosis['win_error_87'] = True
-            win_error_rate = self.stats["win_error_87_count"] / max(1, self.stats["error_packets"])
-            
-            if win_error_rate > 0.8:
-                diagnosis['recommendations'].append(
-                    "WinError 87错误占比超过80%，建议考虑更新PyDivert库或驱动程序"
-                )
-            
-            # 检查是否特定类型数据包导致问题
-            if self.packet_type_stats['df_packets'] > 100 and self.packet_type_stats['large_packets'] > 50:
-                diagnosis['recommendations'].append(
-                    "检测到大量带DF标志的大数据包，建议启用跳过大型数据包处理选项"
-                )
-        
-        # 检查内存问题
+        # 检查WinDivert是否注册
         try:
-            memory_info = psutil.virtual_memory()
-            if memory_info.percent > 85:
-                diagnosis['memory_issue'] = True
-                diagnosis['recommendations'].append(
-                    f"系统内存使用率较高({memory_info.percent}%)，建议增加系统内存或减少应用程序负载"
-                )
-        except:
-            pass
+            is_registered = pydivert.WinDivert.is_registered()
+            diagnosis['windivert_registered'] = is_registered
+            if not is_registered:
+                diagnosis['windivert_status'] = 'not_registered'
+                diagnosis['recommendations'].append('注册WinDivert驱动')
+        except Exception as e:
+            diagnosis['windivert_status'] = 'unknown'
+            diagnosis['error'] = str(e)
         
-        # 检查驱动问题
-        try:
-            if not pydivert.WinDivert.is_registered():
-                diagnosis['driver_issue'] = True
-                diagnosis['recommendations'].append(
-                    "WinDivert驱动服务未注册或未正常运行，建议重新安装驱动"
-                )
-        except:
-            diagnosis['driver_issue'] = True
-            diagnosis['recommendations'].append(
-                "无法检查WinDivert驱动状态，可能未正确安装"
-            )
-        
-        # 检查网络负载
-        packet_rate = 0
-        current_time = time.time()
-        if self.stats["last_packet_time"] > 0 and self.stats["total_packets"] > 1000:
-            time_running = current_time - self.stats["last_packet_time"] + 1  # 避免除零
-            packet_rate = self.stats["total_packets"] / time_running
+        # 检查WinError 87错误比例
+        if self.stats.get('total_packets', 0) > 0:
+            win87_ratio = self.stats.get('win_error_87_count', 0) / self.stats.get('total_packets', 0)
+            diagnosis['win87_error_ratio'] = win87_ratio
             
-            if packet_rate > 10000:  # 每秒超过10000个包
-                diagnosis['network_overload'] = True
-                diagnosis['recommendations'].append(
-                    f"网络流量过高(每秒约{packet_rate:.0f}个包)，建议使用更精确的过滤条件减少处理负载"
-                )
+            if win87_ratio > 0.1:  # 如果超过10%的数据包出现WinError 87
+                diagnosis['windivert_status'] = 'problematic'
+                diagnosis['recommendations'].append('尝试重启WinDivert驱动')
+                diagnosis['recommendations'].append('更新PyDivert库版本')
         
-        # 记录诊断结果
-        logger.info(f"系统诊断结果: {diagnosis}")
-        return diagnosis 
+        # 检查数据包处理成功率
+        if self.stats.get('total_packets', 0) > 0:
+            success_ratio = self.stats.get('passed_packets', 0) / self.stats.get('total_packets', 0)
+            diagnosis['success_ratio'] = success_ratio
+            
+            if success_ratio < 0.5:  # 成功率低于50%
+                diagnosis['recommendations'].append('检查数据包过滤规则')
+                diagnosis['recommendations'].append('减少复杂过滤条件')
+        
+        # 根据统计分析提供建议
+        if self.packet_type_stats.get('local_packets', 0) > self.stats.get('total_packets', 0) * 0.5:
+            # 如果本地回环数据包比例过高
+            diagnosis['recommendations'].append('考虑过滤掉本地回环数据包')
+        
+        if self.packet_type_stats.get('large_packets', 0) > self.stats.get('total_packets', 0) * 0.3:
+            # 如果大型数据包比例过高
+            diagnosis['recommendations'].append('考虑跳过处理大型数据包')
+        
+        return diagnosis
 
     def _configure_windivert_params(self):
-        """配置WinDivert参数，处理可能的错误"""
-        if not hasattr(self.divert, 'set_param'):
-            logger.warning("WinDivert对象没有set_param方法，跳过参数配置")
-            return
-            
+        """配置WinDivert参数，按照PyDivert API标准设置参数"""
         try:
-            # 导入参数常量 - 正确使用API文档中定义的枚举
+            # 导入参数常量 - 使用API文档中定义的枚举类
             from pydivert import Param
             
-            # 参数配置，使用API文档中的正确枚举常量
-            params_to_set = [
-                (Param.QUEUE_LEN, 8192),  # 使用QUEUE_LEN替代QUEUE_SIZE
-                (Param.QUEUE_TIME, 2000)
-            ]
+            # 使用set_param方法设置参数值，按照API文档标准
+            self.divert.set_param(Param.QUEUE_LEN, 8192)
+            self.divert.set_param(Param.QUEUE_TIME, 2000)
             
-            # 尝试设置每个参数
-            params_success = []
-            params_failed = []
+            logger.info(f"已设置WinDivert队列长度为8192，队列时间为2000ms")
             
-            for param, value in params_to_set:
-                try:
-                    self.divert.set_param(param, value)
-                    params_success.append((param, value))
-                except Exception as e:
-                    # 记录失败但继续处理其他参数
-                    params_failed.append((param, value, str(e)))
-                    # 计数错误类型
-                    error_type = type(e).__name__
-                    if error_type not in self.error_tracking['error_types']:
-                        self.error_tracking['error_types'][error_type] = 1
-                    else:
-                        self.error_tracking['error_types'][error_type] += 1
-                    
-            # 如果有成功设置的参数，记录它们
-            if params_success:
-                logger.debug(f"成功设置的WinDivert参数: {params_success}")
-                
-            # 如果有失败的参数，记录错误但不阻止继续
-            if params_failed:
-                for param, value, error in params_failed:
-                    logger.warning(f"设置WinDivert参数 {param}={value} 失败: {error}")
-                    
-                # 如果所有参数都设置失败，尝试使用默认配置
-                if len(params_failed) == len(params_to_set):
-                    logger.warning("所有WinDivert参数设置失败，将使用默认配置")
-                    
-            # 尝试读取当前参数值进行验证
+            # 验证参数设置是否成功
             self._validate_windivert_params()
                 
         except Exception as e:
             logger.warning(f"配置WinDivert参数时发生错误: {e}")
-            # 即使配置失败也继续启动
+            logger.info("将使用WinDivert默认参数配置")
             
     def _validate_windivert_params(self):
         """验证WinDivert参数是否设置成功"""
-        if not hasattr(self.divert, 'get_param'):
-            return
-            
         try:
             from pydivert import Param
             
-            params_to_check = [Param.QUEUE_LEN, Param.QUEUE_TIME]
-            params_values = {}
+            # 获取当前参数值
+            queue_len = self.divert.get_param(Param.QUEUE_LEN)
+            queue_time = self.divert.get_param(Param.QUEUE_TIME)
             
-            for param in params_to_check:
-                try:
-                    value = self.divert.get_param(param)
-                    params_values[str(param)] = value
-                except Exception as e:
-                    # 单个参数获取失败不阻止其他参数获取
-                    logger.debug(f"获取参数 {param} 失败: {e}")
-                    
-            if params_values:
-                logger.debug(f"当前WinDivert参数值: {params_values}")
-            else:
-                logger.warning("无法获取任何WinDivert参数值")
+            logger.debug(f"当前WinDivert参数: QUEUE_LEN={queue_len}, QUEUE_TIME={queue_time}")
                 
         except Exception as e:
             logger.debug(f"验证WinDivert参数时发生错误: {e}")

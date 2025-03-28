@@ -32,6 +32,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("简易防火墙")
         self.setMinimumSize(800, 600)
         
+        # 记录上次更新时间以优化定时器处理
+        self.last_update_time = 0
+        self.update_interval = 1000  # 毫秒
+        
         # 创建UI组件
         self._create_ui()
         
@@ -60,6 +64,8 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self._create_ip_filter_tab(), "IP过滤")
         self.tab_widget.addTab(self._create_port_filter_tab(), "端口过滤")
         self.tab_widget.addTab(self._create_content_filter_tab(), "内容过滤")
+        self.tab_widget.addTab(self._create_performance_tab(), "性能监控")
+        self.tab_widget.addTab(self._create_advanced_settings_tab(), "高级设置")
         self.tab_widget.addTab(self._create_log_tab(), "日志")
         
         main_layout.addWidget(self.tab_widget)
@@ -72,34 +78,66 @@ class MainWindow(QMainWindow):
         """
         # 创建控制面板组
         group_box = QGroupBox("控制面板")
-        layout = QHBoxLayout(group_box)
+        layout = QVBoxLayout(group_box)
+        
+        # 创建状态和控制的水平布局
+        status_layout = QHBoxLayout()
         
         # 创建状态标签
+        status_box = QGroupBox("状态信息")
+        status_box_layout = QVBoxLayout(status_box)
+        
         self.status_label = QLabel("状态: 已停止")
-        layout.addWidget(self.status_label)
+        status_box_layout.addWidget(self.status_label)
         
         # 创建统计信息标签
         self.stats_label = QLabel("总数据包: 0 | 拦截: 0 | 放行: 0")
-        layout.addWidget(self.stats_label)
+        status_box_layout.addWidget(self.stats_label)
         
-        # 弹性空间
-        layout.addStretch()
+        # 添加资源使用情况标签
+        self.resource_label = QLabel("CPU: 0% | 内存: 0%")
+        status_box_layout.addWidget(self.resource_label)
         
-        # 创建协议过滤选项
+        status_layout.addWidget(status_box, stretch=3)
+        
+        # 创建控制选项的分组框
+        controls_box = QGroupBox("控制选项")
+        controls_layout = QVBoxLayout(controls_box)
+        
+        # 创建协议过滤布局
+        protocol_layout = QHBoxLayout()
+        protocol_layout.addWidget(QLabel("允许协议:"))
+        
         self.tcp_checkbox = QCheckBox("TCP")
         self.tcp_checkbox.setChecked(True)
         self.tcp_checkbox.toggled.connect(lambda checked: self.firewall.set_protocol_filter("tcp", checked))
-        layout.addWidget(self.tcp_checkbox)
+        protocol_layout.addWidget(self.tcp_checkbox)
         
         self.udp_checkbox = QCheckBox("UDP")
         self.udp_checkbox.setChecked(True)
         self.udp_checkbox.toggled.connect(lambda checked: self.firewall.set_protocol_filter("udp", checked))
-        layout.addWidget(self.udp_checkbox)
+        protocol_layout.addWidget(self.udp_checkbox)
+        
+        controls_layout.addLayout(protocol_layout)
         
         # 创建启动/停止按钮
+        button_layout = QHBoxLayout()
+        
         self.start_button = QPushButton("启动防火墙")
         self.start_button.clicked.connect(self._toggle_firewall)
-        layout.addWidget(self.start_button)
+        self.start_button.setMinimumHeight(40)  # 更大的按钮
+        button_layout.addWidget(self.start_button)
+        
+        self.restart_button = QPushButton("重启防火墙")
+        self.restart_button.clicked.connect(self._restart_firewall)
+        button_layout.addWidget(self.restart_button)
+        
+        controls_layout.addLayout(button_layout)
+        
+        status_layout.addWidget(controls_box, stretch=2)
+        
+        # 添加状态和控制布局到主布局
+        layout.addLayout(status_layout)
         
         return group_box
         
@@ -266,6 +304,149 @@ class MainWindow(QMainWindow):
         
         return widget
         
+    def _create_performance_tab(self) -> QWidget:
+        """创建性能监控标签页
+        
+        Returns:
+            QWidget: 性能监控标签页
+        """
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # 创建性能统计区域
+        stats_group = QGroupBox("性能统计")
+        stats_layout = QFormLayout(stats_group)
+        
+        # 添加详细统计信息
+        self.perf_total_packets = QLabel("0")
+        stats_layout.addRow("总处理数据包:", self.perf_total_packets)
+        
+        self.perf_dropped_packets = QLabel("0")
+        stats_layout.addRow("已拦截数据包:", self.perf_dropped_packets)
+        
+        self.perf_passed_packets = QLabel("0")
+        stats_layout.addRow("已放行数据包:", self.perf_passed_packets)
+        
+        self.perf_error_packets = QLabel("0")
+        stats_layout.addRow("处理错误数据包:", self.perf_error_packets)
+        
+        self.perf_packets_per_second = QLabel("0")
+        stats_layout.addRow("每秒处理数据包:", self.perf_packets_per_second)
+        
+        self.perf_win_error_87 = QLabel("0")
+        stats_layout.addRow("WinError 87计数:", self.perf_win_error_87)
+        
+        layout.addWidget(stats_group)
+        
+        # 创建系统资源使用情况区域
+        resource_group = QGroupBox("系统资源使用")
+        resource_layout = QFormLayout(resource_group)
+        
+        self.resource_cpu = QLabel("0%")
+        resource_layout.addRow("CPU使用率:", self.resource_cpu)
+        
+        self.resource_memory = QLabel("0%")
+        resource_layout.addRow("内存使用率:", self.resource_memory)
+        
+        self.resource_network_in = QLabel("0 KB/s")
+        resource_layout.addRow("网络流入:", self.resource_network_in)
+        
+        self.resource_network_out = QLabel("0 KB/s")
+        resource_layout.addRow("网络流出:", self.resource_network_out)
+        
+        layout.addWidget(resource_group)
+        
+        # 添加问题诊断区域
+        diagnosis_group = QGroupBox("问题诊断")
+        diagnosis_layout = QVBoxLayout(diagnosis_group)
+        
+        self.diagnosis_text = QTextEdit()
+        self.diagnosis_text.setReadOnly(True)
+        diagnosis_layout.addWidget(self.diagnosis_text)
+        
+        diagnosis_button = QPushButton("运行诊断")
+        diagnosis_button.clicked.connect(self._run_diagnosis)
+        diagnosis_layout.addWidget(diagnosis_button)
+        
+        layout.addWidget(diagnosis_group)
+        
+        return widget
+        
+    def _create_advanced_settings_tab(self) -> QWidget:
+        """创建高级设置标签页
+        
+        Returns:
+            QWidget: 高级设置标签页
+        """
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # 性能优化设置
+        perf_group = QGroupBox("性能优化设置")
+        perf_layout = QFormLayout(perf_group)
+        
+        # 使用批处理模式
+        self.use_batch_mode = QCheckBox()
+        self.use_batch_mode.setChecked(True)
+        self.use_batch_mode.toggled.connect(lambda checked: self._update_adaptive_setting('use_batch_mode', checked))
+        perf_layout.addRow("使用批处理模式:", self.use_batch_mode)
+        
+        # 批处理大小
+        self.batch_size = QSpinBox()
+        self.batch_size.setRange(1, 50)
+        self.batch_size.setValue(5)
+        self.batch_size.valueChanged.connect(lambda value: self._update_adaptive_setting('batch_size', value))
+        perf_layout.addRow("批处理大小:", self.batch_size)
+        
+        # 跳过大型数据包
+        self.skip_large_packets = QCheckBox()
+        self.skip_large_packets.setChecked(False)
+        self.skip_large_packets.toggled.connect(lambda checked: self._update_adaptive_setting('skip_large_packets', checked))
+        perf_layout.addRow("跳过大型数据包:", self.skip_large_packets)
+        
+        # 大型数据包阈值
+        self.large_packet_threshold = QSpinBox()
+        self.large_packet_threshold.setRange(500, 5000)
+        self.large_packet_threshold.setValue(1460)
+        self.large_packet_threshold.setSingleStep(100)
+        self.large_packet_threshold.valueChanged.connect(lambda value: self._update_adaptive_setting('large_packet_threshold', value))
+        perf_layout.addRow("大型数据包阈值(字节):", self.large_packet_threshold)
+        
+        # 跳过本地数据包
+        self.skip_local_packets = QCheckBox()
+        self.skip_local_packets.setChecked(True)
+        self.skip_local_packets.toggled.connect(lambda checked: self._update_adaptive_setting('skip_local_packets', checked))
+        perf_layout.addRow("跳过本地数据包:", self.skip_local_packets)
+        
+        # 允许本地网络通信
+        self.allow_private_network = QCheckBox()
+        self.allow_private_network.setChecked(True)
+        self.allow_private_network.toggled.connect(lambda checked: self._update_adaptive_setting('allow_private_network', checked))
+        perf_layout.addRow("允许本地网络通信:", self.allow_private_network)
+        
+        layout.addWidget(perf_group)
+        
+        # 高级控制设置
+        control_group = QGroupBox("高级控制设置")
+        control_layout = QFormLayout(control_group)
+        
+        # 重启WinDivert
+        restart_windivert_button = QPushButton("重启WinDivert")
+        restart_windivert_button.clicked.connect(self._restart_windivert)
+        control_layout.addRow("WinDivert问题修复:", restart_windivert_button)
+        
+        layout.addWidget(control_group)
+        
+        # 应用设置按钮
+        apply_button = QPushButton("应用设置")
+        apply_button.clicked.connect(self._apply_advanced_settings)
+        layout.addWidget(apply_button)
+        
+        # 读取当前设置并更新UI
+        self._load_advanced_settings()
+        
+        return widget
+        
     def _create_log_tab(self) -> QWidget:
         """创建日志标签页
         
@@ -328,22 +509,257 @@ class MainWindow(QMainWindow):
     
     def _update_status(self):
         """更新状态和统计信息"""
-        status = self.firewall.get_status()
+        current_time = time.time()
+        time_diff = current_time - self.last_update_time
         
-        # 更新统计信息
-        if status['running']:
-            stats = status['stats']
-            self.stats_label.setText(
-                f"总数据包: {stats['total_packets']} | "
-                f"拦截: {stats['dropped_packets']} | "
-                f"放行: {stats['passed_packets']}"
-            )
+        # 限制更新频率，避免UI过载
+        if time_diff < (self.update_interval / 1000):
+            return
             
-        # 更新日志
-        self._update_logs()
+        self.last_update_time = current_time
         
-        # 更新规则列表
-        self._update_rule_lists()
+        # 获取防火墙状态
+        try:
+            status = self.firewall.get_status()
+            
+            # 更新统计信息
+            if status['running']:
+                stats = status['stats']
+                self.stats_label.setText(
+                    f"总数据包: {stats.get('total_packets', 0)} | "
+                    f"拦截: {stats.get('dropped_packets', 0)} | "
+                    f"放行: {stats.get('passed_packets', 0)}"
+                )
+                
+                # 更新资源使用情况
+                if 'diagnosis' in status and 'system_resources' in status['diagnosis']:
+                    resources = status['diagnosis']['system_resources']
+                    self.resource_label.setText(
+                        f"CPU: {resources.get('cpu_percent', 0)}% | "
+                        f"内存: {resources.get('memory_percent', 0)}%"
+                    )
+                
+                # 更新性能监控标签页
+                self._update_performance_tab(stats, status)
+            
+            # 更新日志
+            self._update_logs()
+            
+            # 更新规则列表
+            self._update_rule_lists()
+        except Exception as e:
+            # 错误处理更健壮
+            import traceback
+            print(f"更新状态时出错: {e}")
+            print(traceback.format_exc())
+        
+    def _update_performance_tab(self, stats, status):
+        """更新性能监控标签页
+        
+        Args:
+            stats: 统计信息
+            status: 防火墙状态
+        """
+        try:
+            # 更新基本统计数据
+            self.perf_total_packets.setText(str(stats.get('total_packets', 0)))
+            self.perf_dropped_packets.setText(str(stats.get('dropped_packets', 0)))
+            self.perf_passed_packets.setText(str(stats.get('passed_packets', 0)))
+            self.perf_error_packets.setText(str(stats.get('error_packets', 0)))
+            self.perf_win_error_87.setText(str(stats.get('win_error_87_count', 0)))
+            
+            # 计算每秒处理数据包数
+            if 'start_time' in stats and stats['total_packets'] > 0:
+                running_time = time.time() - stats['start_time']
+                packets_per_second = stats['total_packets'] / max(1, running_time)
+                self.perf_packets_per_second.setText(f"{packets_per_second:.2f}")
+            
+            # 更新系统资源使用情况
+            if 'diagnosis' in status and 'system_resources' in status['diagnosis']:
+                resources = status['diagnosis']['system_resources']
+                
+                self.resource_cpu.setText(f"{resources.get('cpu_percent', 0)}%")
+                self.resource_memory.setText(f"{resources.get('memory_percent', 0)}%")
+                
+                # 更新网络IO信息
+                if 'io_counters' in resources:
+                    io = resources['io_counters']
+                    # 转换为KB/s
+                    bytes_recv = io.get('bytes_recv', 0) / 1024
+                    bytes_sent = io.get('bytes_sent', 0) / 1024
+                    self.resource_network_in.setText(f"{bytes_recv:.2f} KB/s")
+                    self.resource_network_out.setText(f"{bytes_sent:.2f} KB/s")
+            
+            # 更新诊断信息
+            if 'diagnosis' in status:
+                diagnosis = status['diagnosis']
+                
+                # 构建诊断文本
+                diag_text = "系统诊断结果:\n\n"
+                
+                if 'windivert_status' in diagnosis:
+                    status_map = {
+                        'normal': '正常',
+                        'problematic': '有问题',
+                        'not_registered': '未注册',
+                        'unknown': '未知'
+                    }
+                    diag_text += f"WinDivert状态: {status_map.get(diagnosis['windivert_status'], '未知')}\n"
+                
+                if 'recommendations' in diagnosis and diagnosis['recommendations']:
+                    diag_text += "\n推荐操作:\n"
+                    for i, rec in enumerate(diagnosis['recommendations'], 1):
+                        diag_text += f"{i}. {rec}\n"
+                
+                if 'win87_error_ratio' in diagnosis:
+                    diag_text += f"\nWinError 87错误比例: {diagnosis['win87_error_ratio']:.2%}\n"
+                
+                if 'success_ratio' in diagnosis:
+                    diag_text += f"数据包处理成功率: {diagnosis['success_ratio']:.2%}\n"
+                
+                self.diagnosis_text.setText(diag_text)
+        except Exception as e:
+            import traceback
+            print(f"更新性能监控标签页时出错: {e}")
+            print(traceback.format_exc())
+            
+    def _run_diagnosis(self):
+        """运行系统诊断"""
+        try:
+            detailed_stats = self.firewall.get_detailed_stats()
+            diagnosis = self.firewall.packet_filter._diagnose_problem()
+            
+            # 显示诊断结果
+            diag_text = "系统诊断结果:\n\n"
+            
+            # 添加WinDivert状态
+            if 'windivert_status' in diagnosis:
+                status_map = {
+                    'normal': '正常',
+                    'problematic': '有问题',
+                    'not_registered': '未注册',
+                    'unknown': '未知'
+                }
+                diag_text += f"WinDivert状态: {status_map.get(diagnosis['windivert_status'], '未知')}\n"
+            
+            # 添加详细统计
+            diag_text += f"\n详细统计:\n"
+            diag_text += f"总处理数据包: {detailed_stats.get('total_packets', 0)}\n"
+            diag_text += f"已拦截数据包: {detailed_stats.get('dropped_packets', 0)}\n"
+            diag_text += f"已放行数据包: {detailed_stats.get('passed_packets', 0)}\n"
+            diag_text += f"处理错误数据包: {detailed_stats.get('error_packets', 0)}\n"
+            
+            if 'packets_per_second' in detailed_stats:
+                diag_text += f"每秒处理数据包: {detailed_stats['packets_per_second']:.2f}\n"
+            
+            # 添加推荐操作
+            if 'recommendations' in diagnosis and diagnosis['recommendations']:
+                diag_text += "\n推荐操作:\n"
+                for i, rec in enumerate(diagnosis['recommendations'], 1):
+                    diag_text += f"{i}. {rec}\n"
+            
+            # 添加错误类型统计
+            if 'error_types' in diagnosis:
+                diag_text += "\n错误类型统计:\n"
+                for error_type, count in diagnosis['error_types'].items():
+                    diag_text += f"{error_type}: {count}次\n"
+            
+            # 系统资源使用情况
+            if 'system_resources' in detailed_stats:
+                resources = detailed_stats['system_resources']
+                diag_text += f"\n系统资源使用情况:\n"
+                diag_text += f"CPU使用率: {resources.get('cpu_percent', 0)}%\n"
+                diag_text += f"内存使用率: {resources.get('memory_percent', 0)}%\n"
+            
+            # 更新诊断文本
+            self.diagnosis_text.setText(diag_text)
+            
+        except Exception as e:
+            import traceback
+            self.diagnosis_text.setText(f"运行诊断时出错: {str(e)}\n\n{traceback.format_exc()}")
+            
+    def _restart_firewall(self):
+        """重启防火墙"""
+        # 先停止防火墙
+        if self.firewall.is_running:
+            if not self.firewall.stop():
+                QMessageBox.warning(self, "警告", "停止防火墙失败")
+                return
+        
+        # 等待资源释放
+        QApplication.processEvents()
+        time.sleep(1)
+        
+        # 重新启动防火墙
+        if self.firewall.start():
+            self.start_button.setText("停止防火墙")
+            self.status_label.setText("状态: 运行中")
+            QMessageBox.information(self, "提示", "防火墙已重启")
+        else:
+            self.start_button.setText("启动防火墙")
+            self.status_label.setText("状态: 已停止")
+            QMessageBox.critical(self, "错误", "防火墙重启失败")
+            
+    def _restart_windivert(self):
+        """重启WinDivert驱动"""
+        if not self.firewall.is_running:
+            QMessageBox.warning(self, "警告", "防火墙未运行，无法重启WinDivert")
+            return
+            
+        # 尝试重启WinDivert
+        if self.firewall.restart_windivert():
+            QMessageBox.information(self, "提示", "WinDivert已重启")
+        else:
+            QMessageBox.critical(self, "错误", "WinDivert重启失败")
+            
+    def _load_advanced_settings(self):
+        """加载高级设置"""
+        try:
+            settings = self.firewall.performance_settings
+            
+            # 更新UI元素
+            self.use_batch_mode.setChecked(settings.get('use_batch_mode', True))
+            self.batch_size.setValue(settings.get('batch_size', 5))
+            self.skip_large_packets.setChecked(settings.get('skip_large_packets', False))
+            self.large_packet_threshold.setValue(settings.get('large_packet_threshold', 1460))
+            self.skip_local_packets.setChecked(settings.get('skip_local_packets', True))
+            self.allow_private_network.setChecked(settings.get('allow_private_network', True))
+        except Exception as e:
+            QMessageBox.warning(self, "警告", f"加载设置失败: {str(e)}")
+            
+    def _update_adaptive_setting(self, key, value):
+        """更新自适应设置项
+        
+        Args:
+            key: 设置项键名
+            value: 设置项值
+        """
+        try:
+            # 仅更新内存中的设置，不立即应用
+            if hasattr(self.firewall, 'performance_settings'):
+                self.firewall.performance_settings[key] = value
+        except Exception as e:
+            QMessageBox.warning(self, "警告", f"更新设置项失败: {str(e)}")
+            
+    def _apply_advanced_settings(self):
+        """应用高级设置"""
+        try:
+            # 更新防火墙的性能设置
+            settings = {
+                'use_batch_mode': self.use_batch_mode.isChecked(),
+                'batch_size': self.batch_size.value(),
+                'skip_large_packets': self.skip_large_packets.isChecked(),
+                'large_packet_threshold': self.large_packet_threshold.value(),
+                'skip_local_packets': self.skip_local_packets.isChecked(),
+                'allow_private_network': self.allow_private_network.isChecked()
+            }
+            
+            # 应用设置
+            self.firewall.update_performance_settings(settings)
+            
+            QMessageBox.information(self, "提示", "设置已应用")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"应用设置失败: {str(e)}")
         
     def _update_logs(self):
         """更新日志表格"""
