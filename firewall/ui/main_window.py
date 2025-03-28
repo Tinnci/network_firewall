@@ -11,7 +11,8 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
     QTabWidget, QMessageBox, QCheckBox, QGroupBox, QFormLayout,
-    QHeaderView, QSpinBox, QTextEdit, QListWidget, QListWidgetItem
+    QHeaderView, QSpinBox, QTextEdit, QListWidget, QListWidgetItem,
+    QFileDialog # Added import
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QModelIndex
 from PyQt6.QtGui import QIcon, QColor
@@ -170,6 +171,16 @@ class MainWindow(QMainWindow):
         self.bl_ip_list = QListWidget()
         self.bl_ip_list.itemDoubleClicked.connect(self._remove_ip_from_blacklist)
         blacklist_layout.addWidget(self.bl_ip_list)
+
+        # Add Import/Export buttons for Blacklist
+        bl_button_layout = QHBoxLayout()
+        bl_import_button = QPushButton("导入列表")
+        bl_import_button.clicked.connect(lambda: self._import_ip_list('blacklist'))
+        bl_button_layout.addWidget(bl_import_button)
+        bl_export_button = QPushButton("导出列表")
+        bl_export_button.clicked.connect(lambda: self._export_ip_list('blacklist'))
+        bl_button_layout.addWidget(bl_export_button)
+        blacklist_layout.addLayout(bl_button_layout)
         
         # 创建白名单组
         whitelist_group = QGroupBox("IP白名单")
@@ -191,6 +202,16 @@ class MainWindow(QMainWindow):
         self.wl_ip_list = QListWidget()
         self.wl_ip_list.itemDoubleClicked.connect(self._remove_ip_from_whitelist)
         whitelist_layout.addWidget(self.wl_ip_list)
+
+        # Add Import/Export buttons for Whitelist
+        wl_button_layout = QHBoxLayout()
+        wl_import_button = QPushButton("导入列表")
+        wl_import_button.clicked.connect(lambda: self._import_ip_list('whitelist'))
+        wl_button_layout.addWidget(wl_import_button)
+        wl_export_button = QPushButton("导出列表")
+        wl_export_button.clicked.connect(lambda: self._export_ip_list('whitelist'))
+        wl_button_layout.addWidget(wl_export_button)
+        whitelist_layout.addLayout(wl_button_layout)
         
         # 添加到主布局
         main_layout = QHBoxLayout()
@@ -215,9 +236,8 @@ class MainWindow(QMainWindow):
         
         # 添加端口输入和按钮
         bl_input_layout = QHBoxLayout()
-        self.bl_port_input = QSpinBox()
-        self.bl_port_input.setRange(0, 65535)
-        self.bl_port_input.setValue(80)
+        self.bl_port_input = QLineEdit() # Changed from QSpinBox
+        self.bl_port_input.setPlaceholderText("输入端口或范围 (e.g., 80, 8000-8080)")
         bl_input_layout.addWidget(self.bl_port_input)
         
         bl_add_button = QPushButton("添加")
@@ -237,9 +257,8 @@ class MainWindow(QMainWindow):
         
         # 添加端口输入和按钮
         wl_input_layout = QHBoxLayout()
-        self.wl_port_input = QSpinBox()
-        self.wl_port_input.setRange(0, 65535)
-        self.wl_port_input.setValue(443)
+        self.wl_port_input = QLineEdit() # Changed from QSpinBox
+        self.wl_port_input.setPlaceholderText("输入端口或范围 (e.g., 443, 10000-11000)")
         wl_input_layout.addWidget(self.wl_port_input)
         
         wl_add_button = QPushButton("添加")
@@ -894,40 +913,38 @@ class MainWindow(QMainWindow):
             
     # 端口黑白名单操作
     def _add_port_to_blacklist(self):
-        """添加端口到黑名单"""
-        port = self.bl_port_input.value()
-        if self.firewall.add_port_to_blacklist(port):
-            # 不需要清除，让用户继续添加其他端口
-            pass
-        else:
-            QMessageBox.warning(self, "警告", f"添加端口失败: {port}")
+        """添加端口/范围到黑名单"""
+        port_str = self.bl_port_input.text().strip()
+        if port_str:
+            if self.firewall.add_port_to_blacklist(port_str):
+                self.bl_port_input.clear() # Clear after successful add
+            else:
+                QMessageBox.warning(self, "警告", f"添加端口/范围失败: '{port_str}'. 请输入有效端口 (0-65535) 或范围 (e.g., 8000-8080)。")
             
     def _remove_port_from_blacklist(self, item):
-        """从黑名单移除端口"""
-        try:
-            port = int(item.text())
-            if self.firewall.remove_port_from_blacklist(port):
-                self.bl_port_list.takeItem(self.bl_port_list.row(item))
-        except ValueError:
-            pass
+        """从黑名单移除端口/范围"""
+        port_str = item.text()
+        # RuleManager now handles removal logic, just update UI if successful
+        if self.firewall.remove_port_from_blacklist(port_str):
+             self.bl_port_list.takeItem(self.bl_port_list.row(item))
+        # No need for explicit error message here, RuleManager logs errors
             
     def _add_port_to_whitelist(self):
-        """添加端口到白名单"""
-        port = self.wl_port_input.value()
-        if self.firewall.add_port_to_whitelist(port):
-            # 不需要清除，让用户继续添加其他端口
-            pass
-        else:
-            QMessageBox.warning(self, "警告", f"添加端口失败: {port}")
+        """添加端口/范围到白名单"""
+        port_str = self.wl_port_input.text().strip()
+        if port_str:
+            if self.firewall.add_port_to_whitelist(port_str):
+                 self.wl_port_input.clear() # Clear after successful add
+            else:
+                QMessageBox.warning(self, "警告", f"添加端口/范围失败: '{port_str}'. 请输入有效端口 (0-65535) 或范围 (e.g., 10000-11000)。")
             
     def _remove_port_from_whitelist(self, item):
-        """从白名单移除端口"""
-        try:
-            port = int(item.text())
-            if self.firewall.remove_port_from_whitelist(port):
-                self.wl_port_list.takeItem(self.wl_port_list.row(item))
-        except ValueError:
-            pass
+        """从白名单移除端口/范围"""
+        port_str = item.text()
+        # RuleManager now handles removal logic, just update UI if successful
+        if self.firewall.remove_port_from_whitelist(port_str):
+            self.wl_port_list.takeItem(self.wl_port_list.row(item))
+        # No need for explicit error message here, RuleManager logs errors
             
     # 内容过滤操作
     def _add_content_filter(self):
@@ -944,7 +961,59 @@ class MainWindow(QMainWindow):
         pattern = item.text()
         if self.firewall.remove_content_filter(pattern):
             self.content_filter_list.takeItem(self.content_filter_list.row(item))
-            
+
+    # Import/Export IP List Handlers
+    def _import_ip_list(self, list_type: str):
+        """处理导入IP列表按钮点击"""
+        if list_type not in ['blacklist', 'whitelist']:
+            return
+
+        # 打开文件对话框
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            f"导入IP {list_type.capitalize()}",
+            "", # Start directory
+            "文本文件 (*.txt);;所有文件 (*)"
+        )
+
+        if filename:
+            try:
+                success, imported_count, invalid_count = self.firewall.rule_manager.import_ip_list(list_type, filename)
+                if success:
+                    message = f"成功从 {os.path.basename(filename)} 导入 {imported_count} 个IP/CIDR 到 {list_type}。"
+                    if invalid_count > 0:
+                        message += f"\n发现并忽略了 {invalid_count} 个无效条目。"
+                    QMessageBox.information(self, "导入成功", message)
+                    self._update_rule_lists() # Refresh UI list
+                else:
+                    QMessageBox.critical(self, "导入失败", f"从文件导入IP列表时发生错误。请检查日志获取详细信息。")
+            except Exception as e:
+                 QMessageBox.critical(self, "导入错误", f"导入过程中发生意外错误: {e}")
+
+    def _export_ip_list(self, list_type: str):
+        """处理导出IP列表按钮点击"""
+        if list_type not in ['blacklist', 'whitelist']:
+            return
+
+        default_filename = f"ip_{list_type}.txt"
+        # 打开文件保存对话框
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            f"导出IP {list_type.capitalize()}",
+            default_filename, # Default filename
+            "文本文件 (*.txt);;所有文件 (*)"
+        )
+
+        if filename:
+            try:
+                success = self.firewall.rule_manager.export_ip_list(list_type, filename)
+                if success:
+                    QMessageBox.information(self, "导出成功", f"IP {list_type} 已成功导出到\n{filename}")
+                else:
+                    QMessageBox.critical(self, "导出失败", f"导出IP列表到文件时发生错误。请检查日志获取详细信息。")
+            except Exception as e:
+                 QMessageBox.critical(self, "导出错误", f"导出过程中发生意外错误: {e}")
+
     def closeEvent(self, event):
         """窗口关闭事件"""
         # 停止防火墙
@@ -955,4 +1024,4 @@ class MainWindow(QMainWindow):
         self.update_timer.stop()
         
         # 接受关闭事件
-        event.accept() 
+        event.accept()

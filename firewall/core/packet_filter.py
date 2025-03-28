@@ -18,12 +18,15 @@ from ctypes import c_void_p, create_string_buffer, memmove
 
 # 配置日志记录
 log_file = os.path.join(os.getcwd(), 'firewall_debug.log')
+# Ensure the log directory exists
+os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.DEBUG, # Keep DEBUG for packet filter core
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
+        logging.FileHandler(log_file, encoding='utf-8'),
+        logging.StreamHandler() # Keep console output for debugging
     ]
 )
 
@@ -47,8 +50,8 @@ class PacketFilter:
         # 过滤规则
         self.ip_blacklist: Set[str] = set()
         self.ip_whitelist: Set[str] = set()
-        self.port_blacklist: Set[int] = set()
-        self.port_whitelist: Set[int] = set()
+        self.port_blacklist: Set[str] = set() # Changed to Set[str] for ranges
+        self.port_whitelist: Set[str] = set() # Changed to Set[str] for ranges
         self.protocol_filter = {"tcp": True, "udp": True}
         self.content_filters: List[str] = []
         self.compiled_filters = []  # 预编译的正则表达式
@@ -114,11 +117,14 @@ class PacketFilter:
         self.resource_check_interval = 30  # 30秒检查一次
         
         logger.info("数据包过滤器初始化完成")
+        
+        # TODO: 添加配置文件加载功能，支持从配置文件初始化过滤器 (Lower Priority)
+        # TODO: 添加流量分析模块，实现异常流量监测 (Lower Priority)
     
     def start(self):
         """启动数据包过滤"""
         if self.running:
-            return True
+            return
         
         logger.info("正在启动数据包过滤器...")
         
@@ -127,8 +133,18 @@ class PacketFilter:
             self._log_system_info()
         
         # 预编译内容过滤规则
-        self.compiled_filters = [re.compile(pattern) for pattern in self.content_filters]
-        
+        try:
+            self.compiled_filters = [re.compile(pattern) for pattern in self.content_filters]
+            logger.info(f"预编译了 {len(self.compiled_filters)} 个内容过滤规则。")
+        except re.error as e:
+             logger.error(f"内容过滤规则编译失败: {e} - 请检查规则格式。")
+             # Decide if startup should fail or continue without content filtering
+             # For now, continue without content filtering
+             self.compiled_filters = []
+        except Exception as e:
+             logger.error(f"预编译内容过滤规则时发生未知错误: {e}")
+             self.compiled_filters = []
+
         # 构建符合WinDivert语法的过滤器字符串
         filter_string = "tcp or udp"
         
@@ -182,6 +198,9 @@ class PacketFilter:
             logger.error(f"启动过滤器失败: {e}")
             self.running = False
             return False
+            
+        # TODO: 添加自动异常恢复机制 (Lower Priority)
+        # TODO: 添加多网卡支持功能 (Lower Priority)
     
     def stop(self):
         """停止数据包过滤"""
@@ -308,6 +327,9 @@ class PacketFilter:
                         
                     # 暂停一小段时间，避免错误循环消耗CPU
                     time.sleep(0.1)
+                    
+        # TODO: 添加更智能的错误处理机制 (Lower Priority)
+        # TODO: 添加错误自动恢复策略 (Lower Priority)
     
     def _process_single_packet(self, packet, error_count, error_limit, consecutive_errors):
         """处理单个数据包的主逻辑"""
@@ -571,6 +593,9 @@ class PacketFilter:
                 
         except Exception as e:
             logger.error(f"监控系统资源时出错: {e}")
+            
+        # TODO: 添加自动资源优化功能 (Lower Priority)
+        # TODO: 添加在资源超限时自动降级处理机制 (Lower Priority)
     
     def _adjust_logging_level(self):
         """基于错误率自适应调整日志级别"""
@@ -692,11 +717,17 @@ class PacketFilter:
             logger.error(f"记录详细数据包信息时出错: {e}")
     
     def _should_pass_packet(self, packet) -> bool:
-        """判断是否应该放行数据包"""
+        """根据过滤规则判断是否应该放行数据包
+        
+        Args:
+            packet: 数据包对象
+            
+        Returns:
+            bool: 是否放行
+        """
         try:
-            # 检查数据包是否有效
-            if not hasattr(packet, 'tcp') or not hasattr(packet, 'udp'):
-                # 无效数据包，默认放行
+            # 基本有效性检查
+            if not hasattr(packet, 'tcp') and not hasattr(packet, 'udp'):
                 logger.warning("发现无效数据包(缺少tcp/udp属性)，默认放行")
                 return True
             
@@ -767,21 +798,26 @@ class PacketFilter:
                             logger.debug(f"CIDR黑名单检查出错: {cidr_err}")
             
             # 检查端口是否有效
-            if not hasattr(packet, 'src_port') or not hasattr(packet, 'dst_port'):
-                return True
+            src_port = packet.src_port if hasattr(packet, 'src_port') else None
+            dst_port = packet.dst_port if hasattr(packet, 'dst_port') else None
+            if src_port is None or dst_port is None:
+                return True # Cannot filter if ports are missing
                 
-            # 端口过滤
-            src_port = packet.src_port
-            dst_port = packet.dst_port
-            
+            # 端口过滤 (Handles ranges)
             # 白名单优先级高于黑名单
             if self.port_whitelist:
-                if src_port in self.port_whitelist or dst_port in self.port_whitelist:
+                 # Check if either source or destination port matches any whitelist rule
+                if self._check_port_rules(src_port, self.port_whitelist) or \
+                   self._check_port_rules(dst_port, self.port_whitelist):
+                    # logger.debug(f"端口 {src_port} 或 {dst_port} 在白名单中，放行")
                     return True
                     
             # 黑名单过滤    
             if self.port_blacklist:
-                if src_port in self.port_blacklist or dst_port in self.port_blacklist:
+                 # Check if either source or destination port matches any blacklist rule
+                if self._check_port_rules(src_port, self.port_blacklist) or \
+                   self._check_port_rules(dst_port, self.port_blacklist):
+                    # logger.debug(f"端口 {src_port} 或 {dst_port} 在黑名单中，拦截")
                     return False
                     
             # 内容过滤 - 使用预编译的正则表达式提高效率
@@ -799,17 +835,15 @@ class PacketFilter:
                                     logger.debug(f"内容过滤匹配: {pattern.pattern}")
                                     return False
                         
-                        # 兼容普通字符串匹配
-                        for filter_pattern in self.content_filters:
-                            if isinstance(filter_pattern, str) and filter_pattern in payload_str:
-                                logger.debug(f"内容过滤匹配: {filter_pattern}")
-                                return False
+                        # 兼容普通字符串匹配 (Removed as RuleManager now ensures strings)
+                        # for filter_pattern in self.content_filters:
+                        #     if isinstance(filter_pattern, str) and filter_pattern in payload_str:
+                        #         logger.debug(f"内容过滤匹配: {filter_pattern}")
+                        #         return False
                     except UnicodeDecodeError:
-                        # 二进制数据解码失败，尝试作为二进制匹配
-                        for filter_pattern in self.content_filters:
-                            if isinstance(filter_pattern, bytes) or isinstance(filter_pattern, bytearray):
-                                if filter_pattern in payload:
-                                    return False
+                        # 二进制数据解码失败，尝试作为二进制匹配 (Less common, keep?)
+                        # logger.debug("Payload could not be decoded as UTF-8 for content filtering.")
+                        pass # Or maybe try matching bytes if rules allow bytes?
                     except Exception as decode_err:
                         logger.debug(f"内容过滤解码出错: {decode_err}")
             
@@ -819,7 +853,51 @@ class PacketFilter:
             # 出现异常时，记录错误并默认放行
             logger.error(f"过滤数据包时出错: {e}")
             return True
-    
+            
+        # TODO: 添加应用层协议过滤功能 (Lower Priority)
+        # TODO: 添加按流量特征过滤功能 (Lower Priority)
+        # TODO: 添加基于机器学习的异常行为检测功能 (Lower Priority)
+
+    def _parse_port_rule(self, rule: str) -> Union[int, Tuple[int, int], None]:
+        """解析端口规则字符串 (e.g., "80", "8000-8080")"""
+        if '-' in rule:
+            parts = rule.split('-')
+            if len(parts) == 2:
+                try:
+                    start = int(parts[0])
+                    end = int(parts[1])
+                    if 0 <= start <= 65535 and 0 <= end <= 65535 and start <= end:
+                        return (start, end)
+                except ValueError:
+                    pass
+        else:
+            try:
+                port = int(rule)
+                if 0 <= port <= 65535:
+                    return port
+            except ValueError:
+                pass
+        logger.warning(f"无法解析无效的端口规则: {rule}")
+        return None
+
+    def _check_port_rules(self, port: int, rules: Set[str]) -> bool:
+        """检查端口是否匹配规则集 (包含单端口和范围)"""
+        if not isinstance(port, int): # Ensure port is an integer
+             return False
+             
+        for rule_str in rules:
+            parsed_rule = self._parse_port_rule(rule_str)
+            if isinstance(parsed_rule, int):
+                # Single port rule
+                if port == parsed_rule:
+                    return True
+            elif isinstance(parsed_rule, tuple):
+                # Port range rule
+                start, end = parsed_rule
+                if start <= port <= end:
+                    return True
+        return False
+
     def _is_private_ip(self, ip_str):
         """判断IP是否为私有地址"""
         try:
@@ -924,8 +1002,8 @@ class PacketFilter:
     def add_ip_to_blacklist(self, ip: str) -> bool:
         """添加IP到黑名单"""
         try:
-            # 验证IP地址格式
-            ipaddress.ip_address(ip)
+            # 验证IP地址格式 (RuleManager should handle validation)
+            # ipaddress.ip_address(ip)
             self.ip_blacklist.add(ip)
             return True
         except ValueError:
@@ -941,8 +1019,8 @@ class PacketFilter:
     def add_ip_to_whitelist(self, ip: str) -> bool:
         """添加IP到白名单"""
         try:
-            # 验证IP地址格式
-            ipaddress.ip_address(ip)
+            # 验证IP地址格式 (RuleManager should handle validation)
+            # ipaddress.ip_address(ip)
             self.ip_whitelist.add(ip)
             return True
         except ValueError:
@@ -955,28 +1033,26 @@ class PacketFilter:
             return True
         return False
         
-    def add_port_to_blacklist(self, port: int) -> bool:
+    def add_port_to_blacklist(self, port: str) -> bool: # Changed to str
         """添加端口到黑名单"""
-        if 0 <= port <= 65535:
-            self.port_blacklist.add(port)
-            return True
-        return False
+        # Validation should be done by RuleManager
+        self.port_blacklist.add(port)
+        return True
             
-    def remove_port_from_blacklist(self, port: int) -> bool:
+    def remove_port_from_blacklist(self, port: str) -> bool: # Changed to str
         """从黑名单移除端口"""
         if port in self.port_blacklist:
             self.port_blacklist.remove(port)
             return True
         return False
         
-    def add_port_to_whitelist(self, port: int) -> bool:
+    def add_port_to_whitelist(self, port: str) -> bool: # Changed to str
         """添加端口到白名单"""
-        if 0 <= port <= 65535:
-            self.port_whitelist.add(port)
-            return True
-        return False
+        # Validation should be done by RuleManager
+        self.port_whitelist.add(port)
+        return True
             
-    def remove_port_from_whitelist(self, port: int) -> bool:
+    def remove_port_from_whitelist(self, port: str) -> bool: # Changed to str
         """从白名单移除端口"""
         if port in self.port_whitelist:
             self.port_whitelist.remove(port)
@@ -987,6 +1063,15 @@ class PacketFilter:
         """添加内容过滤规则"""
         if pattern and pattern not in self.content_filters:
             self.content_filters.append(pattern)
+            # Recompile filters immediately
+            try:
+                self.compiled_filters = [re.compile(p) for p in self.content_filters]
+                logger.info(f"Recompiled content filters after adding: {pattern}")
+            except re.error as e:
+                 logger.error(f"Failed to recompile content filters after adding {pattern}: {e}")
+                 # Optionally remove the invalid pattern again?
+                 self.content_filters.remove(pattern)
+                 return False
             return True
         return False
         
@@ -994,6 +1079,13 @@ class PacketFilter:
         """移除内容过滤规则"""
         if pattern in self.content_filters:
             self.content_filters.remove(pattern)
+             # Recompile filters immediately
+            try:
+                self.compiled_filters = [re.compile(p) for p in self.content_filters]
+                logger.info(f"Recompiled content filters after removing: {pattern}")
+            except re.error as e:
+                 # This shouldn't happen if they were valid before, but log just in case
+                 logger.error(f"Failed to recompile content filters after removing {pattern}: {e}")
             return True
         return False
         
@@ -1365,6 +1457,9 @@ class PacketFilter:
             diagnosis['recommendations'].append('考虑跳过处理大型数据包')
         
         return diagnosis
+        
+        # TODO: 添加自动修复建议功能 (Lower Priority)
+        # TODO: 添加问题趋势分析功能 (Lower Priority)
 
     def _configure_windivert_params(self):
         """配置WinDivert参数，按照PyDivert API标准设置参数"""
@@ -1398,4 +1493,4 @@ class PacketFilter:
                 
         except Exception as e:
             logger.debug(f"验证WinDivert参数时发生错误: {e}")
-            # 验证失败不影响程序运行 
+            # 验证失败不影响程序运行
