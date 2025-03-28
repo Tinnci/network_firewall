@@ -3,10 +3,12 @@
 
 import os
 import yaml
-from typing import Dict, List, Set, Any, Optional, Tuple # Added Tuple
-import ipaddress
-import re
-import logging # Added import
+from typing import Dict, List, Set, Any, Optional, Tuple
+import logging
+import re # Keep re for potential future regex validation in content filters
+
+# Import from utils
+from ..utils.network_utils import is_valid_ip_or_cidr, is_valid_port_or_range
 
 # Configure logging for RuleManager
 logger = logging.getLogger('RuleManager')
@@ -94,10 +96,10 @@ class RuleManager:
         try:
             # 转换为可序列化的数据结构
             rules_data = {
-                'ip_blacklist': list(rules['ip_blacklist']),
-                'ip_whitelist': list(rules['ip_whitelist']),
-                'port_blacklist': list(rules['port_blacklist']),
-                'port_whitelist': list(rules['port_whitelist']),
+                'ip_blacklist': sorted(list(rules['ip_blacklist'])), # Sort for consistency
+                'ip_whitelist': sorted(list(rules['ip_whitelist'])), # Sort for consistency
+                'port_blacklist': sorted(list(rules['port_blacklist'])), # Sort for consistency
+                'port_whitelist': sorted(list(rules['port_whitelist'])), # Sort for consistency
                 'content_filters': rules['content_filters'],
                 'protocol_filter': rules['protocol_filter']
             }
@@ -106,7 +108,7 @@ class RuleManager:
             os.makedirs(os.path.dirname(os.path.abspath(self.rules_file)), exist_ok=True)
             
             with open(self.rules_file, 'w', encoding='utf-8') as f:
-                yaml.dump(rules_data, f, default_flow_style=False)
+                yaml.dump(rules_data, f, default_flow_style=False, sort_keys=False) # Keep order
                 
             self.rules = rules
             logger.info(f"规则已成功保存到: {self.rules_file}")
@@ -164,50 +166,7 @@ class RuleManager:
             logger.error(f"更新规则失败: {e}")
             return False
             
-    def _is_valid_ip_or_cidr(self, ip_str: str) -> bool:
-        """验证字符串是否为有效的IPv4/IPv6地址或CIDR块"""
-        try:
-            # 尝试解析为单个IP地址
-            ipaddress.ip_address(ip_str)
-            return True
-        except ValueError:
-            try:
-                # 尝试解析为IP网络 (CIDR)
-                ipaddress.ip_network(ip_str, strict=False) # strict=False 允许主机位非零
-                return True
-            except ValueError:
-                logger.warning(f"无效的IP或CIDR格式: {ip_str}")
-                return False
-
-    def _is_valid_port_or_range(self, port_str: str) -> bool:
-        """验证字符串是否为有效的端口号或端口范围 (e.g., 80, 8000-8080)"""
-        if isinstance(port_str, int): # Allow integers directly
-             return 0 <= port_str <= 65535
-        if not isinstance(port_str, str):
-            return False
-            
-        if '-' in port_str:
-            # Range check
-            parts = port_str.split('-')
-            if len(parts) == 2:
-                try:
-                    start = int(parts[0])
-                    end = int(parts[1])
-                    if 0 <= start <= 65535 and 0 <= end <= 65535 and start <= end:
-                        return True
-                except ValueError:
-                    pass # Invalid integer format
-        else:
-            # Single port check
-            try:
-                port = int(port_str)
-                if 0 <= port <= 65535:
-                    return True
-            except ValueError:
-                pass # Invalid integer format
-                
-        logger.warning(f"无效的端口或范围格式: {port_str}")
-        return False
+    # Removed _is_valid_ip_or_cidr and _is_valid_port_or_range, using utils now
 
     def _validate_loaded_rules(self, rules: Dict) -> Dict:
         """验证从文件加载的规则的有效性"""
@@ -216,7 +175,8 @@ class RuleManager:
         # Validate IP lists
         for key in ['ip_blacklist', 'ip_whitelist']:
             if key in rules:
-                valid_ips = {ip for ip in rules[key] if isinstance(ip, str) and self._is_valid_ip_or_cidr(ip)}
+                # Use imported validation function
+                valid_ips = {ip for ip in rules[key] if is_valid_ip_or_cidr(ip)} 
                 invalid_count = len(rules[key]) - len(valid_ips)
                 if invalid_count > 0:
                     logger.warning(f"加载规则时发现 {invalid_count} 个无效的IP/CIDR条目在 {key} 中，已忽略。")
@@ -226,9 +186,10 @@ class RuleManager:
         for key in ['port_blacklist', 'port_whitelist']:
              if key in rules:
                 # Convert all items to string first for consistent validation
-                items_str = [str(item) for item in rules[key]]
-                valid_ports = {item for item in items_str if self._is_valid_port_or_range(item)}
-                invalid_count = len(items_str) - len(valid_ports)
+                items_as_str = [str(item) for item in rules[key]]
+                # Use imported validation function
+                valid_ports = {item for item in items_as_str if is_valid_port_or_range(item)} 
+                invalid_count = len(items_as_str) - len(valid_ports)
                 if invalid_count > 0:
                     logger.warning(f"加载规则时发现 {invalid_count} 个无效的端口/范围条目在 {key} 中，已忽略。")
                 validated_rules[key] = valid_ports # Store validated strings
@@ -264,7 +225,9 @@ class RuleManager:
         Returns:
             bool: 是否添加成功
         """
-        if not self._is_valid_ip_or_cidr(ip):
+        # Use imported validation function
+        if not is_valid_ip_or_cidr(ip): 
+            logger.warning(f"尝试添加无效的IP/CIDR到黑名单: {ip}")
             return False
             
         try:
@@ -310,7 +273,9 @@ class RuleManager:
         Returns:
             bool: 是否添加成功
         """
-        if not self._is_valid_ip_or_cidr(ip):
+        # Use imported validation function
+        if not is_valid_ip_or_cidr(ip): 
+            logger.warning(f"尝试添加无效的IP/CIDR到白名单: {ip}")
             return False
             
         try:
@@ -396,7 +361,8 @@ class RuleManager:
                     if not ip or ip.startswith('#'): # Skip empty lines and comments
                         continue
                         
-                    if self._is_valid_ip_or_cidr(ip):
+                    # Use imported validation function
+                    if is_valid_ip_or_cidr(ip): 
                         if ip not in self.rules[key]:
                             added_ips.add(ip)
                             imported_count += 1
@@ -434,7 +400,9 @@ class RuleManager:
             bool: 是否添加成功
         """
         port_str = str(port) # Ensure string format
-        if not self._is_valid_port_or_range(port_str):
+        # Use imported validation function
+        if not is_valid_port_or_range(port_str): 
+            logger.warning(f"尝试添加无效的端口/范围到黑名单: {port_str}")
             return False
             
         try:
@@ -482,7 +450,9 @@ class RuleManager:
             bool: 是否添加成功
         """
         port_str = str(port) # Ensure string format
-        if not self._is_valid_port_or_range(port_str):
+        # Use imported validation function
+        if not is_valid_port_or_range(port_str): 
+            logger.warning(f"尝试添加无效的端口/范围到白名单: {port_str}")
             return False
             
         try:
@@ -539,9 +509,13 @@ class RuleManager:
                 re.compile(pattern)
                 self.rules['content_filters'].append(pattern)
                 self.save_rules()
-                logger.info(f"内容过滤规则 '{pattern}' 已存在。")
-                return True # Already exists
-            return True
+                logger.info(f"内容过滤规则 '{pattern}' 已添加。") # Corrected log message
+                return True
+            elif pattern in self.rules['content_filters']:
+                 logger.info(f"内容过滤规则 '{pattern}' 已存在。")
+                 return True # Already exists
+            else: # pattern is empty or None
+                 return False
         except re.error as regex_err:
             logger.error(f"添加内容过滤规则失败: 无效的正则表达式 '{pattern}' - {regex_err}")
             return False
@@ -562,6 +536,7 @@ class RuleManager:
             if pattern in self.rules['content_filters']:
                 self.rules['content_filters'].remove(pattern)
                 self.save_rules()
+                logger.info(f"内容过滤规则 '{pattern}' 已移除。") # Added log message
             else:
                 logger.info(f"内容过滤规则 '{pattern}' 不存在。")
             return True

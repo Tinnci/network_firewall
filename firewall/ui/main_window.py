@@ -2,45 +2,63 @@
 # -*- coding: utf-8 -*-
 
 import os
-import sys
 import time
-from datetime import datetime
-from typing import Dict, List, Optional
-import re # Added import
+from typing import List, Union, Set  # Added Union, Set
+import re
+import logging
 
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QLineEdit, QTableWidget, QTableWidgetItem,
-    QTabWidget, QMessageBox, QCheckBox, QGroupBox, QFormLayout,
-    QHeaderView, QSpinBox, QTextEdit, QListWidget, QListWidgetItem,
-    QFileDialog # Added import
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QLabel,
+    QLineEdit,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
+    QMessageBox,
+    QCheckBox,
+    QGroupBox,
+    QFormLayout,
+    QHeaderView,
+    QSpinBox,
+    QTextEdit,
+    QListWidget,
+    QListWidgetItem,
+    QFileDialog,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QModelIndex, pyqtSlot # Added pyqtSlot
-from PyQt6.QtGui import QIcon, QColor
+from PyQt6.QtCore import QTimer, pyqtSlot
+from PyQt6.QtGui import QColor
 
 from ..core.firewall import Firewall
+
+# Get logger for UI module
+logger = logging.getLogger("MainWindowUI")
 
 
 class MainWindow(QMainWindow):
     """防火墙主窗口"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        
+
         # 创建防火墙实例
         self.firewall = Firewall()
-        
+
         # 设置窗口基本属性
         self.setWindowTitle("简易防火墙")
         self.setMinimumSize(800, 600)
-        
+
         # 记录上次更新时间以优化定时器处理
         self.last_update_time = 0
         self.update_interval = 1000  # 毫秒
-        
+
         # 创建UI组件
         self._create_ui()
-        
+
         # 设置更新定时器 (只更新状态和规则，不再更新日志)
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self._update_status)
@@ -48,23 +66,28 @@ class MainWindow(QMainWindow):
 
         # Connect the log signal from Firewall instance
         self.firewall.log_signal.connect(self._add_log_entry)
-        
+
+        # Initial load of rules into UI
+        self._update_rule_lists()
+        # Initial load of settings into UI
+        self._load_advanced_settings()
+
     def _create_ui(self):
         """创建UI组件"""
         # 创建中央窗口部件
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
-        
+
         # 创建主布局
         main_layout = QVBoxLayout(central_widget)
-        
+
         # 创建控制面板
         control_panel = self._create_control_panel()
         main_layout.addWidget(control_panel)
-        
+
         # 创建标签页控件
         self.tab_widget = QTabWidget(self)
-        
+
         # 创建各个标签页
         self.tab_widget.addTab(self._create_ip_filter_tab(), "IP过滤")
         self.tab_widget.addTab(self._create_port_filter_tab(), "端口过滤")
@@ -72,733 +95,529 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self._create_performance_tab(), "性能监控")
         self.tab_widget.addTab(self._create_advanced_settings_tab(), "高级设置")
         self.tab_widget.addTab(self._create_log_tab(), "日志")
-        
+
         main_layout.addWidget(self.tab_widget)
-        
+
     def _create_control_panel(self) -> QWidget:
-        """创建控制面板
-        
-        Returns:
-            QWidget: 控制面板组件
-        """
-        # 创建控制面板组
+        """创建控制面板"""
         group_box = QGroupBox("控制面板")
         layout = QVBoxLayout(group_box)
-        
-        # 创建状态和控制的水平布局
         status_layout = QHBoxLayout()
-        
-        # 创建状态标签
         status_box = QGroupBox("状态信息")
         status_box_layout = QVBoxLayout(status_box)
-        
+
         self.status_label = QLabel("状态: 已停止")
         status_box_layout.addWidget(self.status_label)
-        
-        # 创建统计信息标签
-        self.stats_label = QLabel("总数据包: 0 | 拦截: 0 | 放行: 0")
+        self.stats_label = QLabel("总处理: 0 | 拦截: 0 | 放行: 0")
         status_box_layout.addWidget(self.stats_label)
-        
-        # 添加资源使用情况标签
         self.resource_label = QLabel("CPU: 0% | 内存: 0%")
         status_box_layout.addWidget(self.resource_label)
-        
         status_layout.addWidget(status_box, stretch=3)
-        
-        # 创建控制选项的分组框
+
         controls_box = QGroupBox("控制选项")
         controls_layout = QVBoxLayout(controls_box)
-        
-        # 创建协议过滤布局
         protocol_layout = QHBoxLayout()
         protocol_layout.addWidget(QLabel("允许协议:"))
-        
         self.tcp_checkbox = QCheckBox("TCP")
         self.tcp_checkbox.setChecked(True)
-        self.tcp_checkbox.toggled.connect(lambda checked: self.firewall.set_protocol_filter("tcp", checked))
+        self.tcp_checkbox.toggled.connect(
+            lambda checked: self.firewall.set_protocol_filter("tcp", checked)
+        )
         protocol_layout.addWidget(self.tcp_checkbox)
-        
         self.udp_checkbox = QCheckBox("UDP")
         self.udp_checkbox.setChecked(True)
-        self.udp_checkbox.toggled.connect(lambda checked: self.firewall.set_protocol_filter("udp", checked))
+        self.udp_checkbox.toggled.connect(
+            lambda checked: self.firewall.set_protocol_filter("udp", checked)
+        )
         protocol_layout.addWidget(self.udp_checkbox)
-        
         controls_layout.addLayout(protocol_layout)
-        
-        # 创建启动/停止按钮
+
         button_layout = QHBoxLayout()
-        
         self.start_button = QPushButton("启动防火墙")
         self.start_button.clicked.connect(self._toggle_firewall)
-        self.start_button.setMinimumHeight(40)  # 更大的按钮
+        self.start_button.setMinimumHeight(40)
         button_layout.addWidget(self.start_button)
-        
         self.restart_button = QPushButton("重启防火墙")
         self.restart_button.clicked.connect(self._restart_firewall)
         button_layout.addWidget(self.restart_button)
-        
         controls_layout.addLayout(button_layout)
-        
         status_layout.addWidget(controls_box, stretch=2)
-        
-        # 添加状态和控制布局到主布局
         layout.addLayout(status_layout)
-        
         return group_box
-        
+
     def _create_ip_filter_tab(self) -> QWidget:
-        """创建IP过滤标签页
-        
-        Returns:
-            QWidget: IP过滤标签页
-        """
+        """创建IP过滤标签页"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        
-        # 创建黑名单和白名单组
         blacklist_group = QGroupBox("IP黑名单")
         blacklist_layout = QVBoxLayout(blacklist_group)
-        
-        # 添加IP输入和按钮
         bl_input_layout = QHBoxLayout()
         self.bl_ip_input = QLineEdit()
-        self.bl_ip_input.setPlaceholderText("输入IP地址...")
+        self.bl_ip_input.setPlaceholderText("输入IP地址或CIDR...")
         bl_input_layout.addWidget(self.bl_ip_input)
-        
         bl_add_button = QPushButton("添加")
         bl_add_button.clicked.connect(self._add_ip_to_blacklist)
         bl_input_layout.addWidget(bl_add_button)
-        
         blacklist_layout.addLayout(bl_input_layout)
-        
-        # 黑名单列表
         self.bl_ip_list = QListWidget()
         self.bl_ip_list.itemDoubleClicked.connect(self._remove_ip_from_blacklist)
         blacklist_layout.addWidget(self.bl_ip_list)
-
-        # Add Import/Export buttons for Blacklist
         bl_button_layout = QHBoxLayout()
         bl_import_button = QPushButton("导入列表")
-        bl_import_button.clicked.connect(lambda: self._import_ip_list('blacklist'))
+        bl_import_button.clicked.connect(lambda: self._import_ip_list("blacklist"))
         bl_button_layout.addWidget(bl_import_button)
         bl_export_button = QPushButton("导出列表")
-        bl_export_button.clicked.connect(lambda: self._export_ip_list('blacklist'))
+        bl_export_button.clicked.connect(lambda: self._export_ip_list("blacklist"))
         bl_button_layout.addWidget(bl_export_button)
         blacklist_layout.addLayout(bl_button_layout)
-        
-        # 创建白名单组
+
         whitelist_group = QGroupBox("IP白名单")
         whitelist_layout = QVBoxLayout(whitelist_group)
-        
-        # 添加IP输入和按钮
         wl_input_layout = QHBoxLayout()
         self.wl_ip_input = QLineEdit()
-        self.wl_ip_input.setPlaceholderText("输入IP地址...")
+        self.wl_ip_input.setPlaceholderText("输入IP地址或CIDR...")
         wl_input_layout.addWidget(self.wl_ip_input)
-        
         wl_add_button = QPushButton("添加")
         wl_add_button.clicked.connect(self._add_ip_to_whitelist)
         wl_input_layout.addWidget(wl_add_button)
-        
         whitelist_layout.addLayout(wl_input_layout)
-        
-        # 白名单列表
         self.wl_ip_list = QListWidget()
         self.wl_ip_list.itemDoubleClicked.connect(self._remove_ip_from_whitelist)
         whitelist_layout.addWidget(self.wl_ip_list)
-
-        # Add Import/Export buttons for Whitelist
         wl_button_layout = QHBoxLayout()
         wl_import_button = QPushButton("导入列表")
-        wl_import_button.clicked.connect(lambda: self._import_ip_list('whitelist'))
+        wl_import_button.clicked.connect(lambda: self._import_ip_list("whitelist"))
         wl_button_layout.addWidget(wl_import_button)
         wl_export_button = QPushButton("导出列表")
-        wl_export_button.clicked.connect(lambda: self._export_ip_list('whitelist'))
+        wl_export_button.clicked.connect(lambda: self._export_ip_list("whitelist"))
         wl_button_layout.addWidget(wl_export_button)
         whitelist_layout.addLayout(wl_button_layout)
-        
-        # 添加到主布局
+
         main_layout = QHBoxLayout()
         main_layout.addWidget(blacklist_group)
         main_layout.addWidget(whitelist_group)
         layout.addLayout(main_layout)
-        
         return widget
-        
+
     def _create_port_filter_tab(self) -> QWidget:
-        """创建端口过滤标签页
-        
-        Returns:
-            QWidget: 端口过滤标签页
-        """
+        """创建端口过滤标签页"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        
-        # 创建黑名单和白名单组
         blacklist_group = QGroupBox("端口黑名单")
         blacklist_layout = QVBoxLayout(blacklist_group)
-        
-        # 添加端口输入和按钮
         bl_input_layout = QHBoxLayout()
-        self.bl_port_input = QLineEdit() # Changed from QSpinBox
+        self.bl_port_input = QLineEdit()
         self.bl_port_input.setPlaceholderText("输入端口或范围 (e.g., 80, 8000-8080)")
         bl_input_layout.addWidget(self.bl_port_input)
-        
         bl_add_button = QPushButton("添加")
         bl_add_button.clicked.connect(self._add_port_to_blacklist)
         bl_input_layout.addWidget(bl_add_button)
-        
         blacklist_layout.addLayout(bl_input_layout)
-        
-        # 黑名单列表
         self.bl_port_list = QListWidget()
         self.bl_port_list.itemDoubleClicked.connect(self._remove_port_from_blacklist)
         blacklist_layout.addWidget(self.bl_port_list)
-        
-        # 创建白名单组
+
         whitelist_group = QGroupBox("端口白名单")
         whitelist_layout = QVBoxLayout(whitelist_group)
-        
-        # 添加端口输入和按钮
         wl_input_layout = QHBoxLayout()
-        self.wl_port_input = QLineEdit() # Changed from QSpinBox
+        self.wl_port_input = QLineEdit()
         self.wl_port_input.setPlaceholderText("输入端口或范围 (e.g., 443, 10000-11000)")
         wl_input_layout.addWidget(self.wl_port_input)
-        
         wl_add_button = QPushButton("添加")
         wl_add_button.clicked.connect(self._add_port_to_whitelist)
         wl_input_layout.addWidget(wl_add_button)
-        
         whitelist_layout.addLayout(wl_input_layout)
-        
-        # 白名单列表
         self.wl_port_list = QListWidget()
         self.wl_port_list.itemDoubleClicked.connect(self._remove_port_from_whitelist)
         whitelist_layout.addWidget(self.wl_port_list)
-        
-        # 添加到主布局
+
         main_layout = QHBoxLayout()
         main_layout.addWidget(blacklist_group)
         main_layout.addWidget(whitelist_group)
         layout.addLayout(main_layout)
-        
         return widget
-        
+
     def _create_content_filter_tab(self) -> QWidget:
-        """创建内容过滤标签页
-        
-        Returns:
-            QWidget: 内容过滤标签页
-        """
+        """创建内容过滤标签页"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        
-        # 创建内容过滤组
-        filter_group = QGroupBox("内容过滤")
+        filter_group = QGroupBox("内容过滤 (正则表达式)")
         filter_layout = QVBoxLayout(filter_group)
-        
-        # 添加内容输入和按钮
         input_layout = QHBoxLayout()
         self.content_filter_input = QLineEdit()
-        self.content_filter_input.setPlaceholderText("输入要过滤的内容...")
+        self.content_filter_input.setPlaceholderText("输入要过滤的正则表达式...")
         input_layout.addWidget(self.content_filter_input)
-        
         add_button = QPushButton("添加")
         add_button.clicked.connect(self._add_content_filter)
         input_layout.addWidget(add_button)
-        
         filter_layout.addLayout(input_layout)
-        
-        # 过滤规则列表
         self.content_filter_list = QListWidget()
         self.content_filter_list.itemDoubleClicked.connect(self._remove_content_filter)
         filter_layout.addWidget(self.content_filter_list)
-        
-        # 添加到主布局
         layout.addWidget(filter_group)
-        
-        # 添加使用说明
         help_label = QLabel(
-            "说明: 内容过滤将匹配数据包载荷中的文本内容。\n"
+            "说明: 内容过滤将匹配数据包载荷 (按 UTF-8 解码，忽略错误)。\n"
+            "支持 Python 正则表达式语法。\n"
             "双击列表中的项目可以移除该规则。\n"
-            "注意: 内容过滤可能会影响性能，请谨慎使用。"
+            "注意: 复杂或过多的规则可能会影响性能。"
         )
         layout.addWidget(help_label)
-        
         return widget
-        
+
     def _create_performance_tab(self) -> QWidget:
-        """创建性能监控标签页
-        
-        Returns:
-            QWidget: 性能监控标签页
-        """
+        """创建性能监控标签页"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        
-        # 创建性能统计区域
         stats_group = QGroupBox("性能统计")
         stats_layout = QFormLayout(stats_group)
-        
-        # 添加详细统计信息
         self.perf_total_packets = QLabel("0")
         stats_layout.addRow("总处理数据包:", self.perf_total_packets)
-        
         self.perf_dropped_packets = QLabel("0")
         stats_layout.addRow("已拦截数据包:", self.perf_dropped_packets)
-        
         self.perf_passed_packets = QLabel("0")
         stats_layout.addRow("已放行数据包:", self.perf_passed_packets)
-        
         self.perf_error_packets = QLabel("0")
-        stats_layout.addRow("处理错误数据包:", self.perf_error_packets)
-        
-        self.perf_packets_per_second = QLabel("0")
+        stats_layout.addRow("处理错误计数:", self.perf_error_packets)
+        self.perf_packets_per_second = QLabel("0.00")
         stats_layout.addRow("每秒处理数据包:", self.perf_packets_per_second)
-        
         self.perf_win_error_87 = QLabel("0")
         stats_layout.addRow("WinError 87计数:", self.perf_win_error_87)
-        
+        self.perf_queue_size = QLabel("N/A")
+        stats_layout.addRow("处理队列大小:", self.perf_queue_size)
         layout.addWidget(stats_group)
-        
-        # 创建系统资源使用情况区域
+
         resource_group = QGroupBox("系统资源使用")
         resource_layout = QFormLayout(resource_group)
-        
         self.resource_cpu = QLabel("0%")
         resource_layout.addRow("CPU使用率:", self.resource_cpu)
-        
         self.resource_memory = QLabel("0%")
         resource_layout.addRow("内存使用率:", self.resource_memory)
-        
-        self.resource_network_in = QLabel("0 KB/s")
-        resource_layout.addRow("网络流入:", self.resource_network_in)
-        
-        self.resource_network_out = QLabel("0 KB/s")
-        resource_layout.addRow("网络流出:", self.resource_network_out)
-        
+        self.resource_network_in = QLabel("0 KB")
+        resource_layout.addRow("网络接收 (累计):", self.resource_network_in)
+        self.resource_network_out = QLabel("0 KB")
+        resource_layout.addRow("网络发送 (累计):", self.resource_network_out)
         layout.addWidget(resource_group)
-        
-        # 添加问题诊断区域
-        diagnosis_group = QGroupBox("问题诊断")
+
+        diagnosis_group = QGroupBox("详细统计/诊断")
         diagnosis_layout = QVBoxLayout(diagnosis_group)
-        
         self.diagnosis_text = QTextEdit()
         self.diagnosis_text.setReadOnly(True)
+        self.diagnosis_text.setPlaceholderText("点击“获取详细统计”按钮查看...")
         diagnosis_layout.addWidget(self.diagnosis_text)
-        
-        diagnosis_button = QPushButton("运行诊断")
+        diagnosis_button = QPushButton("获取详细统计")
         diagnosis_button.clicked.connect(self._run_diagnosis)
         diagnosis_layout.addWidget(diagnosis_button)
-        
         layout.addWidget(diagnosis_group)
-        
         return widget
-        
+
     def _create_advanced_settings_tab(self) -> QWidget:
-        """创建高级设置标签页
-        
-        Returns:
-            QWidget: 高级设置标签页
-        """
+        """创建高级设置标签页"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        
-        # 性能优化设置
         perf_group = QGroupBox("性能优化设置")
         perf_layout = QFormLayout(perf_group)
-        
-        # 使用批处理模式
-        self.use_batch_mode = QCheckBox()
-        self.use_batch_mode.setChecked(True)
-        self.use_batch_mode.toggled.connect(lambda checked: self._update_adaptive_setting('use_batch_mode', checked))
-        perf_layout.addRow("使用批处理模式:", self.use_batch_mode)
-        
-        # 批处理大小
-        self.batch_size = QSpinBox()
-        self.batch_size.setRange(1, 50)
-        self.batch_size.setValue(5)
-        self.batch_size.valueChanged.connect(lambda value: self._update_adaptive_setting('batch_size', value))
-        perf_layout.addRow("批处理大小:", self.batch_size)
-        
-        # 跳过大型数据包
-        self.skip_large_packets = QCheckBox()
-        self.skip_large_packets.setChecked(False)
-        self.skip_large_packets.toggled.connect(lambda checked: self._update_adaptive_setting('skip_large_packets', checked))
-        perf_layout.addRow("跳过大型数据包:", self.skip_large_packets)
-        
-        # 大型数据包阈值
-        self.large_packet_threshold = QSpinBox()
-        self.large_packet_threshold.setRange(500, 5000)
-        self.large_packet_threshold.setValue(1460)
-        self.large_packet_threshold.setSingleStep(100)
-        self.large_packet_threshold.valueChanged.connect(lambda value: self._update_adaptive_setting('large_packet_threshold', value))
-        perf_layout.addRow("大型数据包阈值(字节):", self.large_packet_threshold)
-        
-        # 跳过本地数据包
-        self.skip_local_packets = QCheckBox()
-        self.skip_local_packets.setChecked(True)
-        self.skip_local_packets.toggled.connect(lambda checked: self._update_adaptive_setting('skip_local_packets', checked))
-        perf_layout.addRow("跳过本地数据包:", self.skip_local_packets)
-        
-        # 允许本地网络通信
-        self.allow_private_network = QCheckBox()
-        self.allow_private_network.setChecked(True)
-        self.allow_private_network.toggled.connect(lambda checked: self._update_adaptive_setting('allow_private_network', checked))
-        perf_layout.addRow("允许本地网络通信:", self.allow_private_network)
-        
+
+        self.use_queue_model_checkbox = QCheckBox()
+        self.use_queue_model_checkbox.toggled.connect(
+            lambda checked: self._update_performance_setting("use_queue_model", checked)
+        )
+        perf_layout.addRow("使用队列模型:", self.use_queue_model_checkbox)
+        self.num_workers_spinbox = QSpinBox()
+        self.num_workers_spinbox.setRange(1, os.cpu_count() or 4)
+        self.num_workers_spinbox.valueChanged.connect(
+            lambda value: self._update_performance_setting("num_workers", value)
+        )
+        perf_layout.addRow("工作线程数:", self.num_workers_spinbox)
+        self.use_packet_pool_checkbox = QCheckBox()
+        self.use_packet_pool_checkbox.toggled.connect(
+            lambda checked: self._update_performance_setting("use_packet_pool", checked)
+        )
+        perf_layout.addRow("使用数据包对象池:", self.use_packet_pool_checkbox)
+        self.packet_pool_size_spinbox = QSpinBox()
+        self.packet_pool_size_spinbox.setRange(10, 1000)
+        self.packet_pool_size_spinbox.setSingleStep(10)
+        self.packet_pool_size_spinbox.valueChanged.connect(
+            lambda value: self._update_performance_setting("packet_pool_size", value)
+        )
+        perf_layout.addRow("对象池大小:", self.packet_pool_size_spinbox)
+        self.skip_local_packets_checkbox = QCheckBox()
+        self.skip_local_packets_checkbox.toggled.connect(
+            lambda checked: self._update_performance_setting(
+                "skip_local_packets", checked
+            )
+        )
+        perf_layout.addRow("跳过本地回环包:", self.skip_local_packets_checkbox)
+        self.allow_private_network_checkbox = QCheckBox()
+        self.allow_private_network_checkbox.toggled.connect(
+            lambda checked: self._update_performance_setting(
+                "allow_private_network", checked
+            )
+        )
+        perf_layout.addRow("允许私有网络互通:", self.allow_private_network_checkbox)
         layout.addWidget(perf_group)
-        
-        # 高级控制设置
+
         control_group = QGroupBox("高级控制设置")
         control_layout = QFormLayout(control_group)
-        
-        # 重启WinDivert
         restart_windivert_button = QPushButton("重启WinDivert")
         restart_windivert_button.clicked.connect(self._restart_windivert)
         control_layout.addRow("WinDivert问题修复:", restart_windivert_button)
-        
         layout.addWidget(control_group)
-        
-        # 应用设置按钮
+
         apply_button = QPushButton("应用设置")
         apply_button.clicked.connect(self._apply_advanced_settings)
         layout.addWidget(apply_button)
-        
-        # 读取当前设置并更新UI
-        self._load_advanced_settings()
-        
         return widget
-        
+
     def _create_log_tab(self) -> QWidget:
-        """创建日志标签页
-        
-        Returns:
-            QWidget: 日志标签页
-        """
+        """创建日志标签页"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        
-        # 创建日志表格
         self.log_table = QTableWidget()
         self.log_table.setColumnCount(8)
-        self.log_table.setHorizontalHeaderLabels([
-            "时间", "源IP", "目标IP", "源端口", "目标端口", 
-            "协议", "动作", "大小(字节)"
-        ])
-        
-        # 设置表格属性
+        self.log_table.setHorizontalHeaderLabels(
+            [
+                "时间",
+                "源IP",
+                "目标IP",
+                "源端口",
+                "目标端口",
+                "协议",
+                "动作",
+                "大小(字节)",
+            ]
+        )
         header = self.log_table.horizontalHeader()
-        # 在PyQt6中，为了兼容不同版本，使用以下设置方式
-        try:
-            header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        except:
-            # 降级处理，适配较老版本的PyQt6
-            header.setSectionResizeMode(QHeaderView.SectionResizeMode.Stretch)
-        
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(True)
+        self.log_table.setAlternatingRowColors(True)
         layout.addWidget(self.log_table)
-        
-        # 添加控制按钮
         button_layout = QHBoxLayout()
-        
-        clear_button = QPushButton("清除日志")
-        clear_button.clicked.connect(self._clear_log_table) # Changed target method
+        clear_button = QPushButton("清除显示")
+        clear_button.clicked.connect(self._clear_log_table)
         button_layout.addWidget(clear_button)
-        
-        # Removed Refresh button
-        
         layout.addLayout(button_layout)
-        
         return widget
-        
+
     def _toggle_firewall(self):
         """切换防火墙启动/停止状态"""
         if self.firewall.is_running:
-            # 停止防火墙
             if self.firewall.stop():
                 self.start_button.setText("启动防火墙")
                 self.status_label.setText("状态: 已停止")
                 QMessageBox.information(self, "提示", "防火墙已停止")
         else:
-            # 启动防火墙
             if self.firewall.start():
                 self.start_button.setText("停止防火墙")
                 self.status_label.setText("状态: 运行中")
                 QMessageBox.information(self, "提示", "防火墙已启动")
             else:
-                QMessageBox.critical(self, "错误", "防火墙启动失败，请检查是否以管理员权限运行")
-    
+                QMessageBox.critical(
+                    self, "错误", "防火墙启动失败，请检查是否以管理员权限运行"
+                )
+
     def _update_status(self):
         """更新状态和统计信息"""
         current_time = time.time()
         time_diff = current_time - self.last_update_time
-        
-        # 限制更新频率，避免UI过载
         if time_diff < (self.update_interval / 1000):
             return
-            
         self.last_update_time = current_time
-        
-        # 获取防火墙状态
+
         try:
             status = self.firewall.get_status()
-            
-            # 更新统计信息
-            if status['running']:
-                stats = status['stats']
+            if status["running"]:
+                stats = status.get("processor_stats", {})
                 self.stats_label.setText(
-                    f"总数据包: {stats.get('total_packets', 0)} | "
-                    f"拦截: {stats.get('dropped_packets', 0)} | "
-                    f"放行: {stats.get('passed_packets', 0)}"
+                    f"总处理: {stats.get('total_processed', 0)} | "
+                    f"拦截: {stats.get('dropped', 0)} | "
+                    f"放行: {stats.get('passed', 0)}"
                 )
-                
-                # 更新资源使用情况
-                if 'diagnosis' in status and 'system_resources' in status['diagnosis']:
-                    resources = status['diagnosis']['system_resources']
-                    self.resource_label.setText(
-                        f"CPU: {resources.get('cpu_percent', 0)}% | "
-                        f"内存: {resources.get('memory_percent', 0)}%"
-                    )
-                
-                # 更新性能监控标签页
-                self._update_performance_tab(stats, status)
-            
-            # Removed call to _update_logs()
-            
-            # 更新规则列表
+                detailed_stats = self.firewall.get_detailed_stats()
+                system_resources = detailed_stats.get("system_resources", {})
+                self.resource_label.setText(
+                    f"CPU: {system_resources.get('cpu_percent', 0):.1f}% | "
+                    f"内存: {system_resources.get('memory_percent', 0):.1f}%"
+                )
+                self._update_performance_tab(stats, detailed_stats)
+            else:
+                self.stats_label.setText("总处理: 0 | 拦截: 0 | 放行: 0")
+                self.resource_label.setText("CPU: 0% | 内存: 0%")
+                self._update_performance_tab({}, {})
             self._update_rule_lists()
         except Exception as e:
-            # 错误处理更健壮
             import traceback
+
             print(f"更新状态时出错: {e}")
-            print(traceback.format_exc())
-        
-    def _update_performance_tab(self, stats, status):
-        """更新性能监控标签页
-        
-        Args:
-            stats: 统计信息
-            status: 防火墙状态
-        """
+            logger.error(f"Error in UI update status: {e}", exc_info=True)
+
+    def _update_performance_tab(self, processor_stats, detailed_stats):
+        """更新性能监控标签页"""
         try:
-            # 更新基本统计数据
-            self.perf_total_packets.setText(str(stats.get('total_packets', 0)))
-            self.perf_dropped_packets.setText(str(stats.get('dropped_packets', 0)))
-            self.perf_passed_packets.setText(str(stats.get('passed_packets', 0)))
-            self.perf_error_packets.setText(str(stats.get('error_packets', 0)))
-            self.perf_win_error_87.setText(str(stats.get('win_error_87_count', 0)))
-            
-            # 计算每秒处理数据包数
-            if 'start_time' in stats and stats['total_packets'] > 0:
-                running_time = time.time() - stats['start_time']
-                packets_per_second = stats['total_packets'] / max(1, running_time)
-                self.perf_packets_per_second.setText(f"{packets_per_second:.2f}")
-            
-            # 更新系统资源使用情况
-            if 'diagnosis' in status and 'system_resources' in status['diagnosis']:
-                resources = status['diagnosis']['system_resources']
-                
-                self.resource_cpu.setText(f"{resources.get('cpu_percent', 0)}%")
-                self.resource_memory.setText(f"{resources.get('memory_percent', 0)}%")
-                
-                # 更新网络IO信息
-                if 'io_counters' in resources:
-                    io = resources['io_counters']
-                    # 转换为KB/s
-                    bytes_recv = io.get('bytes_recv', 0) / 1024
-                    bytes_sent = io.get('bytes_sent', 0) / 1024
-                    self.resource_network_in.setText(f"{bytes_recv:.2f} KB/s")
-                    self.resource_network_out.setText(f"{bytes_sent:.2f} KB/s")
-            
-            # 更新诊断信息
-            if 'diagnosis' in status:
-                diagnosis = status['diagnosis']
-                
-                # 构建诊断文本
-                diag_text = "系统诊断结果:\n\n"
-                
-                if 'windivert_status' in diagnosis:
-                    status_map = {
-                        'normal': '正常',
-                        'problematic': '有问题',
-                        'not_registered': '未注册',
-                        'unknown': '未知'
-                    }
-                    diag_text += f"WinDivert状态: {status_map.get(diagnosis['windivert_status'], '未知')}\n"
-                
-                if 'recommendations' in diagnosis and diagnosis['recommendations']:
-                    diag_text += "\n推荐操作:\n"
-                    for i, rec in enumerate(diagnosis['recommendations'], 1):
-                        diag_text += f"{i}. {rec}\n"
-                
-                if 'win87_error_ratio' in diagnosis:
-                    diag_text += f"\nWinError 87错误比例: {diagnosis['win87_error_ratio']:.2%}\n"
-                
-                if 'success_ratio' in diagnosis:
-                    diag_text += f"数据包处理成功率: {diagnosis['success_ratio']:.2%}\n"
-                
-                self.diagnosis_text.setText(diag_text)
+            self.perf_total_packets.setText(
+                str(processor_stats.get("total_processed", 0))
+            )
+            self.perf_dropped_packets.setText(str(processor_stats.get("dropped", 0)))
+            self.perf_passed_packets.setText(str(processor_stats.get("passed", 0)))
+            self.perf_error_packets.setText(str(processor_stats.get("errors", 0)))
+            self.perf_win_error_87.setText(
+                str(processor_stats.get("win_error_87_count", 0))
+            )
+
+            pps = detailed_stats.get("packets_per_second", 0.0)
+            self.perf_packets_per_second.setText(f"{pps:.2f}")
+
+            queue_size = processor_stats.get("queue_size")
+            queue_label = self.perf_queue_size.parentWidget().findChild(
+                QLabel, "处理队列大小:"
+            )  # Find label - might be fragile
+            if queue_size is not None:
+                self.perf_queue_size.setText(str(queue_size))
+                self.perf_queue_size.setVisible(True)
+                if queue_label:
+                    queue_label.setVisible(True)
+            else:
+                self.perf_queue_size.setText("N/A")
+                self.perf_queue_size.setVisible(False)
+                if queue_label:
+                    queue_label.setVisible(False)
+
+            resources = detailed_stats.get("system_resources", {})
+            self.resource_cpu.setText(f"{resources.get('cpu_percent', 0):.1f}%")
+            self.resource_memory.setText(f"{resources.get('memory_percent', 0):.1f}%")
+
+            io_counters = resources.get("io_counters", {})
+            bytes_recv_kb = io_counters.get("bytes_recv", 0) / 1024
+            bytes_sent_kb = io_counters.get("bytes_sent", 0) / 1024
+            self.resource_network_in.setText(f"{bytes_recv_kb:.2f} KB")
+            self.resource_network_out.setText(f"{bytes_sent_kb:.2f} KB")
+
         except Exception as e:
-            import traceback
-            print(f"更新性能监控标签页时出错: {e}")
-            print(traceback.format_exc())
-            
+            logger.error(f"Error updating performance tab: {e}", exc_info=True)
+
     def _run_diagnosis(self):
-        """运行系统诊断"""
+        """获取并显示详细统计信息"""
         try:
             detailed_stats = self.firewall.get_detailed_stats()
-            diagnosis = self.firewall.packet_filter._diagnose_problem()
-            
-            # 显示诊断结果
-            diag_text = "系统诊断结果:\n\n"
-            
-            # 添加WinDivert状态
-            if 'windivert_status' in diagnosis:
-                status_map = {
-                    'normal': '正常',
-                    'problematic': '有问题',
-                    'not_registered': '未注册',
-                    'unknown': '未知'
-                }
-                diag_text += f"WinDivert状态: {status_map.get(diagnosis['windivert_status'], '未知')}\n"
-            
-            # 添加详细统计
-            diag_text += f"\n详细统计:\n"
-            diag_text += f"总处理数据包: {detailed_stats.get('total_packets', 0)}\n"
-            diag_text += f"已拦截数据包: {detailed_stats.get('dropped_packets', 0)}\n"
-            diag_text += f"已放行数据包: {detailed_stats.get('passed_packets', 0)}\n"
-            diag_text += f"处理错误数据包: {detailed_stats.get('error_packets', 0)}\n"
-            
-            if 'packets_per_second' in detailed_stats:
-                diag_text += f"每秒处理数据包: {detailed_stats['packets_per_second']:.2f}\n"
-            
-            # 添加推荐操作
-            if 'recommendations' in diagnosis and diagnosis['recommendations']:
-                diag_text += "\n推荐操作:\n"
-                for i, rec in enumerate(diagnosis['recommendations'], 1):
-                    diag_text += f"{i}. {rec}\n"
-            
-            # 添加错误类型统计
-            if 'error_types' in diagnosis:
-                diag_text += "\n错误类型统计:\n"
-                for error_type, count in diagnosis['error_types'].items():
-                    diag_text += f"{error_type}: {count}次\n"
-            
-            # 系统资源使用情况
-            if 'system_resources' in detailed_stats:
-                resources = detailed_stats['system_resources']
-                diag_text += f"\n系统资源使用情况:\n"
-                diag_text += f"CPU使用率: {resources.get('cpu_percent', 0)}%\n"
-                diag_text += f"内存使用率: {resources.get('memory_percent', 0)}%\n"
-            
-            # 更新诊断文本
+            diag_text = "详细统计信息:\n\n"
+            for key, value in detailed_stats.items():
+                if isinstance(value, dict):
+                    diag_text += f"{key}:\n"
+                    for sub_key, sub_value in value.items():
+                        if isinstance(sub_value, (int, float)):
+                            diag_text += (
+                                f"  {sub_key}: {sub_value:,.2f}\n"
+                                if isinstance(sub_value, float)
+                                else f"  {sub_key}: {sub_value:,}\n"
+                            )
+                        else:
+                            diag_text += f"  {sub_key}: {sub_value}\n"
+                else:
+                    if isinstance(value, (int, float)):
+                        diag_text += (
+                            f"{key}: {value:,.2f}\n"
+                            if isinstance(value, float)
+                            else f"{key}: {value:,}\n"
+                        )
+                    else:
+                        diag_text += f"{key}: {value}\n"
             self.diagnosis_text.setText(diag_text)
-            
         except Exception as e:
-            import traceback
-            self.diagnosis_text.setText(f"运行诊断时出错: {str(e)}\n\n{traceback.format_exc()}")
+            logger.error(f"Error getting detailed stats for UI: {e}", exc_info=True)
+            self.diagnosis_text.setText(f"获取详细统计时出错: {str(e)}")
 
-    @pyqtSlot(str) # Decorator to mark this as a slot receiving a string
+    @pyqtSlot(str)
     def _add_log_entry(self, log_message: str):
         """Slot to receive log messages via signal and add them to the table."""
-        max_rows = 500 # Limit table rows for performance
+        max_rows = 500
         try:
-            # Regex patterns (ensure raw strings and correct escaping)
-            # Copied from the old _update_logs method
             packet_log_pattern = re.compile(
-                r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+[\w.]+\s+-\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+-\s+" # Timestamp, Name, Level
-                r"Packet (放行|拦截):\s+" # Action
-                r"Proto=(\w+),\s+"        # Protocol
-                r"Src=([\w.:\[\]]+):(\w+),\s+" # Allow IPv6 []
-                r"Dst=([\w.:\[\]]+):(\w+),\s+" # Allow IPv6 []
-                r"Size=(\d+)"             # Size
+                r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+-\s+"
+                r"Packet (放行|拦截):\s+"
+                r"Proto=(\w+),\s+"
+                r"Src=([\w.:\[\]]+):([\w*]+),\s+"
+                r"Dst=([\w.:\[\]]+):([\w*]+),\s+"
+                r"Size=(\d+)"
             )
             general_log_pattern = re.compile(
-                 r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+[\w.]+\s+-\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+-\s+(.*)"
+                r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+-\s+([\w.]+)\s+-\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+-\s+(.*)"
             )
 
             log_message = log_message.strip()
             if not log_message:
                 return
 
-            # Insert new row at the top
             self.log_table.insertRow(0)
-
             packet_match = packet_log_pattern.match(log_message)
-            if packet_match:
-                time_str, level, action, protocol, src_ip, src_port, dst_ip, dst_port, size = packet_match.groups()
-                display_time = time_str.split(',')[0] 
 
+            if packet_match:
+                (
+                    time_str,
+                    logger_name,
+                    level,
+                    action,
+                    protocol,
+                    src_ip,
+                    src_port,
+                    dst_ip,
+                    dst_port,
+                    size,
+                ) = packet_match.groups()
+                display_time = time_str.split(",")[0]
                 self.log_table.setItem(0, 0, QTableWidgetItem(display_time))
                 self.log_table.setItem(0, 1, QTableWidgetItem(src_ip))
                 self.log_table.setItem(0, 2, QTableWidgetItem(dst_ip))
                 self.log_table.setItem(0, 3, QTableWidgetItem(src_port))
                 self.log_table.setItem(0, 4, QTableWidgetItem(dst_port))
                 self.log_table.setItem(0, 5, QTableWidgetItem(protocol))
-                
                 action_item = QTableWidgetItem(action)
-                action_item.setForeground(QColor('red') if action == '拦截' else QColor('green'))
+                action_item.setForeground(
+                    QColor("red") if action == "拦截" else QColor("green")
+                )
                 self.log_table.setItem(0, 6, action_item)
-                
                 self.log_table.setItem(0, 7, QTableWidgetItem(size))
             else:
-                general_match = general_log_pattern.match(log_message) # Try general match here
+                general_match = general_log_pattern.match(log_message)
                 if general_match:
-                     time_str, level, message = general_match.groups()
-                     display_time = time_str.split(',')[0]
-                     
-                     self.log_table.setItem(0, 0, QTableWidgetItem(display_time))
-                     message_item = QTableWidgetItem(message.strip()) # Strip message whitespace
-                     
-                     # Set color based on level
-                     if level == "ERROR" or level == "CRITICAL":
-                          message_item.setForeground(QColor('darkRed'))
-                     elif level == "WARNING":
-                           message_item.setForeground(QColor('orange'))
-                     # Optional: Color INFO/DEBUG differently if desired
-                     # else: # INFO or DEBUG
-                     #       message_item.setForeground(QColor('blue'))
-
-                     self.log_table.setItem(0, 1, message_item)
-                     # Span message across remaining columns
-                     self.log_table.setSpan(0, 1, 1, self.log_table.columnCount() - 1) 
+                    time_str, logger_name, level, message = general_match.groups()
+                    display_time = time_str.split(",")[0]
+                    self.log_table.setItem(0, 0, QTableWidgetItem(display_time))
+                    full_message = f"[{logger_name}] {message.strip()}"
+                    message_item = QTableWidgetItem(full_message)
+                    if level == "ERROR" or level == "CRITICAL":
+                        message_item.setForeground(QColor("darkRed"))
+                    elif level == "WARNING":
+                        message_item.setForeground(QColor("darkOrange"))
+                    self.log_table.setItem(0, 1, message_item)
+                    self.log_table.setSpan(0, 1, 1, self.log_table.columnCount() - 1)
                 else:
-                     # Fallback for unparseable lines
-                     self.log_table.setItem(0, 0, QTableWidgetItem(log_message))
-                     self.log_table.setSpan(0, 0, 1, self.log_table.columnCount())
+                    self.log_table.setItem(0, 0, QTableWidgetItem(log_message))
+                    self.log_table.setSpan(0, 0, 1, self.log_table.columnCount())
 
-            # Limit table rows
             if self.log_table.rowCount() > max_rows:
                 self.log_table.removeRow(self.log_table.rowCount() - 1)
 
         except Exception as e:
-            # Avoid crashing the UI due to logging errors
             print(f"Error adding log entry to UI: {e}")
-            # Optionally add a simple error message to the table itself
+            logger.error(f"Error adding log entry to UI: {e}", exc_info=True)
             try:
                 self.log_table.insertRow(0)
                 error_item = QTableWidgetItem(f"UI Log Error: {e}")
-                error_item.setForeground(QColor('magenta'))
+                error_item.setForeground(QColor("magenta"))
                 self.log_table.setItem(0, 0, error_item)
                 self.log_table.setSpan(0, 0, 1, self.log_table.columnCount())
                 if self.log_table.rowCount() > max_rows:
                     self.log_table.removeRow(self.log_table.rowCount() - 1)
-            except: # Nested try-except to prevent error loops
+            except:
                 pass
 
     def _restart_firewall(self):
         """重启防火墙"""
-        # 先停止防火墙
         if self.firewall.is_running:
             if not self.firewall.stop():
                 QMessageBox.warning(self, "警告", "停止防火墙失败")
                 return
-        
-        # 等待资源释放
         QApplication.processEvents()
         time.sleep(1)
-        
-        # 重新启动防火墙
         if self.firewall.start():
             self.start_button.setText("停止防火墙")
             self.status_label.setText("状态: 运行中")
@@ -807,261 +626,267 @@ class MainWindow(QMainWindow):
             self.start_button.setText("启动防火墙")
             self.status_label.setText("状态: 已停止")
             QMessageBox.critical(self, "错误", "防火墙重启失败")
-            
+
     def _restart_windivert(self):
         """重启WinDivert驱动"""
         if not self.firewall.is_running:
             QMessageBox.warning(self, "警告", "防火墙未运行，无法重启WinDivert")
             return
-            
-        # 尝试重启WinDivert
         if self.firewall.restart_windivert():
             QMessageBox.information(self, "提示", "WinDivert已重启")
         else:
             QMessageBox.critical(self, "错误", "WinDivert重启失败")
-            
+
     def _load_advanced_settings(self):
-        """加载高级设置"""
+        """加载高级设置并更新UI"""
         try:
             settings = self.firewall.performance_settings
-            
-            # 更新UI元素
-            self.use_batch_mode.setChecked(settings.get('use_batch_mode', True))
-            self.batch_size.setValue(settings.get('batch_size', 5))
-            self.skip_large_packets.setChecked(settings.get('skip_large_packets', False))
-            self.large_packet_threshold.setValue(settings.get('large_packet_threshold', 1460))
-            self.skip_local_packets.setChecked(settings.get('skip_local_packets', True))
-            self.allow_private_network.setChecked(settings.get('allow_private_network', True))
+            self.use_queue_model_checkbox.setChecked(
+                settings.get("use_queue_model", False)
+            )
+            self.num_workers_spinbox.setValue(settings.get("num_workers", 2))
+            self.use_packet_pool_checkbox.setChecked(
+                settings.get("use_packet_pool", True)
+            )
+            self.packet_pool_size_spinbox.setValue(
+                settings.get("packet_pool_size", 100)
+            )
+            self.skip_local_packets_checkbox.setChecked(
+                settings.get("skip_local_packets", True)
+            )
+            self.allow_private_network_checkbox.setChecked(
+                settings.get("allow_private_network", True)
+            )
         except Exception as e:
+            logger.error(f"Failed to load settings into UI: {e}", exc_info=True)
             QMessageBox.warning(self, "警告", f"加载设置失败: {str(e)}")
-            
-    def _update_adaptive_setting(self, key, value):
-        """更新自适应设置项
-        
-        Args:
-            key: 设置项键名
-            value: 设置项值
-        """
-        try:
-            # 仅更新内存中的设置，不立即应用
-            if hasattr(self.firewall, 'performance_settings'):
-                self.firewall.performance_settings[key] = value
-        except Exception as e:
-            QMessageBox.warning(self, "警告", f"更新设置项失败: {str(e)}")
-            
-    def _apply_advanced_settings(self):
-        """应用高级设置"""
-        try:
-            # 更新防火墙的性能设置
-            settings = {
-                'use_batch_mode': self.use_batch_mode.isChecked(),
-                'batch_size': self.batch_size.value(),
-                'skip_large_packets': self.skip_large_packets.isChecked(),
-                'large_packet_threshold': self.large_packet_threshold.value(),
-                'skip_local_packets': self.skip_local_packets.isChecked(),
-                'allow_private_network': self.allow_private_network.isChecked()
-            }
-            
-            # 应用设置
-            self.firewall.update_performance_settings(settings)
-            
-            QMessageBox.information(self, "提示", "设置已应用")
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"应用设置失败: {str(e)}")
-        
-    # Removed _update_logs method
 
-    def _clear_log_table(self): # Renamed from _clear_logs
+    def _update_performance_setting(self, key, value):
+        """Slot to update a setting in the central dict when a UI control changes."""
+        try:
+            if key in self.firewall.performance_settings:
+                self.firewall.performance_settings[key] = value
+                logger.debug(f"UI updated performance_settings: {key} = {value}")
+            else:
+                logger.warning(f"UI tried to update unknown setting: {key}")
+        except Exception as e:
+            logger.error(
+                f"Error updating performance setting from UI: {e}", exc_info=True
+            )
+            QMessageBox.warning(self, "警告", f"更新设置项 '{key}' 失败: {str(e)}")
+
+    def _apply_advanced_settings(self):
+        """应用高级设置到防火墙核心"""
+        try:
+            self.firewall.update_performance_settings(
+                self.firewall.performance_settings
+            )
+            QMessageBox.information(
+                self,
+                "提示",
+                "设置已应用。\n某些设置（如队列模型、工作线程数）可能需要重启防火墙才能完全生效。",
+            )
+        except Exception as e:
+            logger.error(f"Failed to apply settings: {e}", exc_info=True)
+            QMessageBox.critical(self, "错误", f"应用设置失败: {str(e)}")
+
+    def _clear_log_table(self):
         """清除日志表格内容"""
         self.log_table.setRowCount(0)
-        # Removed file clearing logic
-        QMessageBox.information(self, "日志清除", "日志显示已清除。")
-        
+
     def _update_rule_lists(self):
-        """更新规则列表"""
-        rules = self.firewall.rule_manager.get_rules()
-        
-        # 更新IP黑名单
-        self._update_list_widget(self.bl_ip_list, rules['ip_blacklist'])
-        
-        # 更新IP白名单
-        self._update_list_widget(self.wl_ip_list, rules['ip_whitelist'])
-        
-        # 更新端口黑名单
-        self._update_list_widget(self.bl_port_list, rules['port_blacklist'])
-        
-        # 更新端口白名单
-        self._update_list_widget(self.wl_port_list, rules['port_whitelist'])
-        
-        # 更新内容过滤规则
-        self._update_list_widget(self.content_filter_list, rules['content_filters'])
-        
-    def _update_list_widget(self, list_widget, items):
-        """更新列表控件内容，避免重复添加
-        
-        Args:
-            list_widget: 列表控件
-            items: 项目列表
-        """
-        # 获取当前列表内容
-        current_items = set()
-        for i in range(list_widget.count()):
-            current_items.add(list_widget.item(i).text())
-            
-        # 添加新项目
-        for item in items:
-            item_str = str(item)
-            if item_str not in current_items:
-                list_widget.addItem(item_str)
-                
-        # 移除已删除的项目
-        items_set = set(str(item) for item in items)
-        for i in range(list_widget.count() - 1, -1, -1):
-            if list_widget.item(i).text() not in items_set:
-                list_widget.takeItem(i)
-    
-    # IP黑白名单操作
+        """更新所有规则列表UI"""
+        try:
+            rules = self.firewall.rule_manager.get_rules()
+            self._update_list_widget(self.bl_ip_list, rules.get("ip_blacklist", set()))
+            self._update_list_widget(self.wl_ip_list, rules.get("ip_whitelist", set()))
+            self._update_list_widget(
+                self.bl_port_list, rules.get("port_blacklist", set())
+            )
+            self._update_list_widget(
+                self.wl_port_list, rules.get("port_whitelist", set())
+            )
+            self._update_list_widget(
+                self.content_filter_list, rules.get("content_filters", [])
+            )
+        except Exception as e:
+            logger.error(f"Error updating rule lists in UI: {e}", exc_info=True)
+
+    def _update_list_widget(self, list_widget: QListWidget, items: Union[Set, List]):
+        """高效地更新列表控件内容"""
+        try:
+            current_items_text = {
+                list_widget.item(i).text() for i in range(list_widget.count())
+            }
+            new_items_text = {str(item) for item in items}
+            items_to_add = new_items_text - current_items_text
+            items_to_remove = current_items_text - new_items_text
+
+            if items_to_remove:
+                rows_to_remove = []
+                for i in range(list_widget.count()):
+                    try:  # Add inner try-except for item access
+                        if list_widget.item(i).text() in items_to_remove:
+                            rows_to_remove.append(i)
+                    except AttributeError:
+                        pass  # Ignore if item is None
+                for i in sorted(rows_to_remove, reverse=True):
+                    list_widget.takeItem(i)
+            if items_to_add:
+                list_widget.addItems(sorted(list(items_to_add)))
+        except Exception as e:
+            logger.error(
+                f"Error updating list widget '{list_widget.objectName()}': {e}",
+                exc_info=True,
+            )
+
+    # --- Rule Management UI Slots ---
     def _add_ip_to_blacklist(self):
-        """添加IP到黑名单"""
         ip = self.bl_ip_input.text().strip()
         if ip:
             if self.firewall.add_ip_to_blacklist(ip):
                 self.bl_ip_input.clear()
             else:
-                QMessageBox.warning(self, "警告", f"无效的IP地址: {ip}")
-                
-    def _remove_ip_from_blacklist(self, item):
-        """从黑名单移除IP"""
+                QMessageBox.warning(self, "添加失败", f"无效的IP/CIDR或添加失败: {ip}")
+
+    def _remove_ip_from_blacklist(self, item: QListWidgetItem):
         ip = item.text()
-        if self.firewall.remove_ip_from_blacklist(ip):
-            self.bl_ip_list.takeItem(self.bl_ip_list.row(item))
-            
+        if not self.firewall.remove_ip_from_blacklist(ip):
+            QMessageBox.warning(self, "移除失败", f"移除IP失败: {ip}")
+
     def _add_ip_to_whitelist(self):
-        """添加IP到白名单"""
         ip = self.wl_ip_input.text().strip()
         if ip:
             if self.firewall.add_ip_to_whitelist(ip):
                 self.wl_ip_input.clear()
             else:
-                QMessageBox.warning(self, "警告", f"无效的IP地址: {ip}")
-                
-    def _remove_ip_from_whitelist(self, item):
-        """从白名单移除IP"""
+                QMessageBox.warning(self, "添加失败", f"无效的IP/CIDR或添加失败: {ip}")
+
+    def _remove_ip_from_whitelist(self, item: QListWidgetItem):
         ip = item.text()
-        if self.firewall.remove_ip_from_whitelist(ip):
-            self.wl_ip_list.takeItem(self.wl_ip_list.row(item))
-            
-    # 端口黑白名单操作
+        if not self.firewall.remove_ip_from_whitelist(ip):
+            QMessageBox.warning(self, "移除失败", f"移除IP失败: {ip}")
+
     def _add_port_to_blacklist(self):
-        """添加端口/范围到黑名单"""
         port_str = self.bl_port_input.text().strip()
         if port_str:
             if self.firewall.add_port_to_blacklist(port_str):
-                self.bl_port_input.clear() # Clear after successful add
+                self.bl_port_input.clear()
             else:
-                QMessageBox.warning(self, "警告", f"添加端口/范围失败: '{port_str}'. 请输入有效端口 (0-65535) 或范围 (e.g., 8000-8080)。")
-            
-    def _remove_port_from_blacklist(self, item):
-        """从黑名单移除端口/范围"""
+                QMessageBox.warning(
+                    self,
+                    "添加失败",
+                    f"添加端口/范围失败: '{port_str}'. 请输入有效端口 (0-65535) 或范围 (e.g., 8000-8080)。",
+                )
+
+    def _remove_port_from_blacklist(self, item: QListWidgetItem):
         port_str = item.text()
-        # RuleManager now handles removal logic, just update UI if successful
-        if self.firewall.remove_port_from_blacklist(port_str):
-             self.bl_port_list.takeItem(self.bl_port_list.row(item))
-        # No need for explicit error message here, RuleManager logs errors
-            
+        if not self.firewall.remove_port_from_blacklist(port_str):
+            QMessageBox.warning(self, "移除失败", f"移除端口/范围失败: {port_str}")
+
     def _add_port_to_whitelist(self):
-        """添加端口/范围到白名单"""
         port_str = self.wl_port_input.text().strip()
         if port_str:
             if self.firewall.add_port_to_whitelist(port_str):
-                 self.wl_port_input.clear() # Clear after successful add
+                self.wl_port_input.clear()
             else:
-                QMessageBox.warning(self, "警告", f"添加端口/范围失败: '{port_str}'. 请输入有效端口 (0-65535) 或范围 (e.g., 10000-11000)。")
-            
-    def _remove_port_from_whitelist(self, item):
-        """从白名单移除端口/范围"""
+                QMessageBox.warning(
+                    self,
+                    "添加失败",
+                    f"添加端口/范围失败: '{port_str}'. 请输入有效端口 (0-65535) 或范围 (e.g., 10000-11000)。",
+                )
+
+    def _remove_port_from_whitelist(self, item: QListWidgetItem):
         port_str = item.text()
-        # RuleManager now handles removal logic, just update UI if successful
-        if self.firewall.remove_port_from_whitelist(port_str):
-            self.wl_port_list.takeItem(self.wl_port_list.row(item))
-        # No need for explicit error message here, RuleManager logs errors
-            
-    # 内容过滤操作
+        if not self.firewall.remove_port_from_whitelist(port_str):
+            QMessageBox.warning(self, "移除失败", f"移除端口/范围失败: {port_str}")
+
     def _add_content_filter(self):
-        """添加内容过滤规则"""
         pattern = self.content_filter_input.text().strip()
         if pattern:
             if self.firewall.add_content_filter(pattern):
                 self.content_filter_input.clear()
             else:
-                QMessageBox.warning(self, "警告", f"添加内容过滤规则失败: {pattern}")
-                
-    def _remove_content_filter(self, item):
-        """移除内容过滤规则"""
+                QMessageBox.warning(
+                    self,
+                    "添加失败",
+                    f"添加内容过滤规则失败 (可能是无效的正则表达式): {pattern}",
+                )
+
+    def _remove_content_filter(self, item: QListWidgetItem):
         pattern = item.text()
-        if self.firewall.remove_content_filter(pattern):
-            self.content_filter_list.takeItem(self.content_filter_list.row(item))
+        if not self.firewall.remove_content_filter(pattern):
+            QMessageBox.warning(self, "移除失败", f"移除内容过滤规则失败: {pattern}")
 
-    # Import/Export IP List Handlers
+    # --- Import/Export UI Slots ---
     def _import_ip_list(self, list_type: str):
-        """处理导入IP列表按钮点击"""
-        if list_type not in ['blacklist', 'whitelist']:
+        if list_type not in ["blacklist", "whitelist"]:
             return
-
-        # 打开文件对话框
         filename, _ = QFileDialog.getOpenFileName(
             self,
             f"导入IP {list_type.capitalize()}",
-            "", # Start directory
-            "文本文件 (*.txt);;所有文件 (*)"
+            "",
+            "文本文件 (*.txt);;所有文件 (*)",
         )
-
         if filename:
             try:
-                success, imported_count, invalid_count = self.firewall.rule_manager.import_ip_list(list_type, filename)
+                success, imported_count, invalid_count = (
+                    self.firewall.rule_manager.import_ip_list(list_type, filename)
+                )
                 if success:
                     message = f"成功从 {os.path.basename(filename)} 导入 {imported_count} 个IP/CIDR 到 {list_type}。"
                     if invalid_count > 0:
                         message += f"\n发现并忽略了 {invalid_count} 个无效条目。"
                     QMessageBox.information(self, "导入成功", message)
-                    self._update_rule_lists() # Refresh UI list
+                    self._update_rule_lists()
                 else:
-                    QMessageBox.critical(self, "导入失败", f"从文件导入IP列表时发生错误。请检查日志获取详细信息。")
+                    QMessageBox.critical(
+                        self,
+                        "导入失败",
+                        f"从文件导入IP列表时发生错误。请检查日志获取详细信息。",
+                    )
             except Exception as e:
-                 QMessageBox.critical(self, "导入错误", f"导入过程中发生意外错误: {e}")
+                logger.error(
+                    f"Error during IP list import UI action: {e}", exc_info=True
+                )
+                QMessageBox.critical(self, "导入错误", f"导入过程中发生意外错误: {e}")
 
     def _export_ip_list(self, list_type: str):
-        """处理导出IP列表按钮点击"""
-        if list_type not in ['blacklist', 'whitelist']:
+        if list_type not in ["blacklist", "whitelist"]:
             return
-
         default_filename = f"ip_{list_type}.txt"
-        # 打开文件保存对话框
         filename, _ = QFileDialog.getSaveFileName(
             self,
             f"导出IP {list_type.capitalize()}",
-            default_filename, # Default filename
-            "文本文件 (*.txt);;所有文件 (*)"
+            default_filename,
+            "文本文件 (*.txt);;所有文件 (*)",
         )
-
         if filename:
             try:
                 success = self.firewall.rule_manager.export_ip_list(list_type, filename)
                 if success:
-                    QMessageBox.information(self, "导出成功", f"IP {list_type} 已成功导出到\n{filename}")
+                    QMessageBox.information(
+                        self, "导出成功", f"IP {list_type} 已成功导出到\n{filename}"
+                    )
                 else:
-                    QMessageBox.critical(self, "导出失败", f"导出IP列表到文件时发生错误。请检查日志获取详细信息。")
+                    QMessageBox.critical(
+                        self,
+                        "导出失败",
+                        f"导出IP列表到文件时发生错误。请检查日志获取详细信息。",
+                    )
             except Exception as e:
-                 QMessageBox.critical(self, "导出错误", f"导出过程中发生意外错误: {e}")
+                logger.error(
+                    f"Error during IP list export UI action: {e}", exc_info=True
+                )
+                QMessageBox.critical(self, "导出错误", f"导出过程中发生意外错误: {e}")
 
     def closeEvent(self, event):
         """窗口关闭事件"""
-        # 停止防火墙
+        logger.info("Close event received. Stopping firewall...")
         if self.firewall.is_running:
             self.firewall.stop()
-        
-        # 停止定时器
         self.update_timer.stop()
-        
-        # 接受关闭事件
+        logger.info("UI Timer stopped.")
         event.accept()
+        logger.info("Exiting application.")
+        QApplication.quit()

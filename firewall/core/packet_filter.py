@@ -11,10 +11,13 @@ import subprocess
 import queue
 import psutil
 import re
-from typing import List, Dict, Set, Tuple, Optional, Union, Callable
+from typing import List, Dict, Set, Optional, Callable
 
 import pydivert
 from ctypes import c_void_p, create_string_buffer, memmove
+
+# Import from utils
+from ..utils.network_utils import parse_port_rule # Import utility functions
 
 # Get logger instance (configuration should happen elsewhere, e.g., firewall.py or main.py)
 logger = logging.getLogger('PacketFilter')
@@ -835,27 +838,7 @@ class PacketFilter:
         # TODO: 添加按流量特征过滤功能 (Lower Priority)
         # TODO: 添加基于机器学习的异常行为检测功能 (Lower Priority)
 
-    def _parse_port_rule(self, rule: str) -> Union[int, Tuple[int, int], None]:
-        """解析端口规则字符串 (e.g., "80", "8000-8080")"""
-        if '-' in rule:
-            parts = rule.split('-')
-            if len(parts) == 2:
-                try:
-                    start = int(parts[0])
-                    end = int(parts[1])
-                    if 0 <= start <= 65535 and 0 <= end <= 65535 and start <= end:
-                        return (start, end)
-                except ValueError:
-                    pass
-        else:
-            try:
-                port = int(rule)
-                if 0 <= port <= 65535:
-                    return port
-            except ValueError:
-                pass
-        logger.warning(f"无法解析无效的端口规则: {rule}")
-        return None
+    # Removed _parse_port_rule, using utils.parse_port_rule now
 
     def _check_port_rules(self, port: int, rules: Set[str]) -> bool:
         """检查端口是否匹配规则集 (包含单端口和范围)"""
@@ -863,7 +846,8 @@ class PacketFilter:
              return False
              
         for rule_str in rules:
-            parsed_rule = self._parse_port_rule(rule_str)
+            # Use imported parse_port_rule function
+            parsed_rule = parse_port_rule(rule_str) 
             if isinstance(parsed_rule, int):
                 # Single port rule
                 if port == parsed_rule:
@@ -882,6 +866,8 @@ class PacketFilter:
             return ip.is_private or ip.is_loopback
         except ValueError:
             return False
+
+    # Removed _is_private_ip, using utils.is_private_ip now
     
     def _is_problematic_packet(self, packet) -> bool:
         """检查是否为可能导致问题的数据包类型"""
