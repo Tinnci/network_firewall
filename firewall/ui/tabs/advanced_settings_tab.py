@@ -6,7 +6,7 @@ from typing import Dict, Any
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QPushButton, QCheckBox, QGroupBox, QFormLayout, 
-    QSpinBox, QMessageBox
+    QSpinBox
 )
 from PyQt6.QtCore import pyqtSignal
 

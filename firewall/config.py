@@ -4,7 +4,7 @@
 import logging
 import os
 import yaml
-from typing import Dict, Any
+from typing import Dict
 
 # Get logger for config loading itself
 logger = logging.getLogger('ConfigLoader')

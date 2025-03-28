@@ -27,7 +27,7 @@ git clone <repository-url>
 cd network-firewall
 
 # 使用 uv 安装依赖
-uv pip install -e .
+uv sync
 ```
 
 ## 运行方法
@@ -66,20 +66,42 @@ python main.py
 ```
 network_firewall/
 ├── firewall/
+│   ├── __init__.py
+│   ├── config.py              # 配置加载与管理
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── firewall.py        # 防火墙主类
-│   │   ├── packet_filter.py   # 数据包过滤器
-│   │   └── rule_manager.py    # 规则管理器
+│   │   ├── firewall.py        # 防火墙核心逻辑类
+│   │   ├── packet_analyzer.py   # 数据包分析与解码
+│   │   ├── packet_filter.py   # 数据包过滤逻辑
+│   │   ├── packet_interceptor.py# 数据包捕获与拦截 (基于PyDivert)
+│   │   ├── packet_processor.py  # 数据包处理流程协调
+│   │   ├── rule_manager.py    # 规则加载与管理
+│   │   └── rules/             # 规则定义、存储与验证
+│   │       ├── __init__.py
+│   │       ├── rule_storage.py  # 规则文件读写
+│   │       └── rule_validator.py# 规则格式验证
 │   ├── ui/
 │   │   ├── __init__.py
-│   │   └── main_window.py     # 主窗口UI
-│   ├── resources/
-│   │   └── __init__.py
-│   └── __init__.py
-├── main.py                    # 程序入口
-├── pyproject.toml             # 项目配置
-└── README.md                  # 项目说明
+│   │   ├── main_window.py     # 主窗口UI界面
+│   │   └── tabs/              # UI中的各个标签页
+│   │       ├── __init__.py
+│   │       ├── advanced_settings_tab.py
+│   │       ├── content_filter_tab.py
+│   │       ├── ip_filter_tab.py
+│   │       ├── log_tab.py
+│   │       ├── performance_tab.py
+│   │       └── port_filter_tab.py
+│   └── utils/                 # 工具模块
+│       ├── __init__.py
+│       ├── logging_utils.py   # 日志记录相关工具
+│       ├── network_utils.py   # 网络相关工具
+│       └── performance_utils.py # 性能相关工具
+├── logs/                      # 日志文件目录
+├── main.py                    # 程序主入口
+├── pyproject.toml             # 项目构建与依赖配置 (PDM)
+├── README.md                  # 项目说明文档
+├── rules.yaml                 # 防火墙规则配置文件
+└── ...                        # 其他配置文件和环境文件 (.gitignore, .venv, etc.)
 ```
 
 ## 许可证

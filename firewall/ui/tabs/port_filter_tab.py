@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from typing import Set, Union
+from typing import Set
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, 
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, 
     QListWidget, QListWidgetItem, QGroupBox
 )
 from PyQt6.QtCore import pyqtSignal
