@@ -1,0 +1,8 @@
+ip_blacklist: []
+ip_whitelist: []
+port_blacklist: []
+port_whitelist: []
+content_filters: []
+protocol_filter:
+  tcp: true
+  udp: true

@@ -445,7 +445,6 @@ class MainWindow(QMainWindow):
                 self._update_performance_tab({}, {})
             self._update_rule_lists()
         except Exception as e:
-            import traceback
 
             print(f"更新状态时出错: {e}")
             logger.error(f"Error in UI update status: {e}", exc_info=True)
@@ -843,7 +842,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.critical(
                         self,
                         "导入失败",
-                        f"从文件导入IP列表时发生错误。请检查日志获取详细信息。",
+                        "从文件导入IP列表时发生错误。请检查日志获取详细信息。",
                     )
             except Exception as e:
                 logger.error(
@@ -872,7 +871,7 @@ class MainWindow(QMainWindow):
                     QMessageBox.critical(
                         self,
                         "导出失败",
-                        f"导出IP列表到文件时发生错误。请检查日志获取详细信息。",
+                        "导出IP列表到文件时发生错误。请检查日志获取详细信息。",
                     )
             except Exception as e:
                 logger.error(

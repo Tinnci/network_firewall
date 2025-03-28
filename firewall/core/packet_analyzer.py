@@ -5,12 +5,12 @@ import logging
 import re
 import ipaddress # Added import
 import time # Added import
-from typing import Dict, List, Set, Tuple, Optional, Union
+from typing import Dict, List, Set
 
 import pydivert
 
 # Import from utils
-from ..utils.network_utils import is_private_ip, parse_port_rule, is_valid_ip_or_cidr
+from ..utils.network_utils import is_private_ip, parse_port_rule
 
 # Get logger instance
 logger = logging.getLogger('PacketAnalyzer')
@@ -96,10 +96,10 @@ class PacketAnalyzer:
                 return True # Pass non-TCP/UDP packets by default
 
             if is_tcp and not self.protocol_filter.get("tcp", True):
-                logger.debug(f"Blocking TCP packet due to protocol filter.")
+                logger.debug("Blocking TCP packet due to protocol filter.")
                 return False
             if is_udp and not self.protocol_filter.get("udp", True):
-                logger.debug(f"Blocking UDP packet due to protocol filter.")
+                logger.debug("Blocking UDP packet due to protocol filter.")
                 return False
 
             # 2. IP Address Filtering

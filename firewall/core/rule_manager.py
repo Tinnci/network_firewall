@@ -2,316 +2,244 @@
 # -*- coding: utf-8 -*-
 
 import os
-import yaml
-from typing import Dict, List, Set, Any, Optional, Tuple
 import logging
-import re # Keep re for potential future regex validation in content filters
+import re
+from typing import Dict, Any, Tuple, Union
 
-# Import from utils
+# Import from local subpackage and utils
+from .rules import rule_storage, rule_validator
 from ..utils.network_utils import is_valid_ip_or_cidr, is_valid_port_or_range
 
-# Configure logging for RuleManager
 logger = logging.getLogger('RuleManager')
 
-
 class RuleManager:
-    """过滤规则管理器"""
+    """
+    过滤规则管理器。
+    协调规则的加载、验证、内存管理和持久化。
+    """
     
     def __init__(self, rules_file: str = 'rules.yaml'):
-        """初始化规则管理器
+        """
+        初始化规则管理器。
         
         Args:
-            rules_file: 规则文件路径
+            rules_file: 规则文件的路径。
         """
         self.rules_file = rules_file
-        self.rules = self._load_default_rules()
+        self.rules: Dict[str, Any] = {} # Initialize as empty dict
+        self._load_and_validate_rules()
+
+    def _load_and_validate_rules(self):
+        """加载并验证规则，如果失败则使用默认规则。"""
+        raw_data = rule_storage.load_rules_from_file(self.rules_file)
+        default_data = rule_storage.load_default_rules_data()
         
-        # 如果规则文件存在，加载规则
-        if os.path.isfile(rules_file):
-            try:
-                self.rules = self._load_rules()
-            except Exception as e:
-                logger.error(f"加载规则文件失败: {e}, 使用默认规则")
-                
-        # TODO: 添加规则版本控制功能 (Lower Priority)
-        # TODO: 添加规则备份和恢复功能 (Lower Priority)
-        
-    def _load_default_rules(self) -> Dict:
-        """加载默认规则
-        
-        Returns:
-            Dict: 默认规则
-        """
-        return {
-            'ip_blacklist': set(),
-            'ip_whitelist': set(),
-            'port_blacklist': set(),
-            'port_whitelist': set(),
-            'content_filters': [],
-            'protocol_filter': {"tcp": True, "udp": True}
-        }
-        
-    def _load_rules(self) -> Dict:
-        """从文件加载规则
-        
-        Returns:
-            Dict: 加载的规则
-        """
-        try:
-            with open(self.rules_file, 'r', encoding='utf-8') as f:
-                rules_data = yaml.safe_load(f)
-                
-                # 转换为适当的数据结构
-                rules = {
-                    'ip_blacklist': set(rules_data.get('ip_blacklist', [])),
-                    'ip_whitelist': set(rules_data.get('ip_whitelist', [])),
-                    'port_blacklist': set(rules_data.get('port_blacklist', [])),
-                    'port_whitelist': set(rules_data.get('port_whitelist', [])),
-                    'content_filters': rules_data.get('content_filters', []),
-                    'protocol_filter': rules_data.get('protocol_filter', {"tcp": True, "udp": True})
-                }
-                
-                # Validate loaded rules
-                rules = self._validate_loaded_rules(rules)
-                logger.info(f"成功加载并验证规则文件: {self.rules_file}")
-                return rules
-        except Exception as e:
-            logger.error(f"加载规则文件时出错: {e}")
-            return self._load_default_rules()
-            
-        # TODO: 添加规则格式错误处理 (Partially done in _validate_loaded_rules)
-        
-    def save_rules(self, rules: Dict = None) -> bool:
-        """保存规则到文件
-        
-        Args:
-            rules: 要保存的规则，默认为当前规则
-            
-        Returns:
-            bool: 是否保存成功
-        """
-        if rules is None:
-            rules = self.rules
-            
-        try:
-            # 转换为可序列化的数据结构
-            rules_data = {
-                'ip_blacklist': sorted(list(rules['ip_blacklist'])), # Sort for consistency
-                'ip_whitelist': sorted(list(rules['ip_whitelist'])), # Sort for consistency
-                'port_blacklist': sorted(list(rules['port_blacklist'])), # Sort for consistency
-                'port_whitelist': sorted(list(rules['port_whitelist'])), # Sort for consistency
-                'content_filters': rules['content_filters'],
-                'protocol_filter': rules['protocol_filter']
-            }
-            
-            # 确保目录存在
-            os.makedirs(os.path.dirname(os.path.abspath(self.rules_file)), exist_ok=True)
-            
-            with open(self.rules_file, 'w', encoding='utf-8') as f:
-                yaml.dump(rules_data, f, default_flow_style=False, sort_keys=False) # Keep order
-                
-            self.rules = rules
-            logger.info(f"规则已成功保存到: {self.rules_file}")
-            return True
-        except Exception as e:
-            logger.error(f"保存规则文件时出错: {e}")
-            return False
-            
-        # TODO: 添加规则保存自动备份功能 (Lower Priority)
-        # TODO: 添加规则变更日志记录功能 (Lower Priority)
-        
-    def get_rules(self) -> Dict:
-        """获取当前规则
-        
-        Returns:
-            Dict: 当前规则
-        """
+        if raw_data is None:
+            logger.warning("无法从文件加载规则，将使用默认规则。")
+            # Validate the default data to ensure correct types (e.g., sets)
+            self.rules = rule_validator.validate_rules(default_data, default_data) 
+            # Attempt to save the default rules to create the file
+            self._save_rules_to_storage() 
+        else:
+            # Validate the loaded data
+            self.rules = rule_validator.validate_rules(raw_data, default_data)
+            # Optionally save back immediately if validation cleaned up data
+            # self._save_rules_to_storage() 
+
+    def _save_rules_to_storage(self) -> bool:
+        """将当前内存中的规则保存到存储。"""
+        # The save function in rule_storage handles converting sets to lists
+        return rule_storage.save_rules_to_file(self.rules_file, self.rules)
+
+    def get_rules(self) -> Dict[str, Any]:
+        """获取当前内存中的规则 (包含集合等内部使用的数据结构)。"""
         return self.rules
         
-    def update_rules(self, new_rules: Dict) -> bool:
-        """更新规则
-        
-        Args:
-            new_rules: 新规则字典
-            
-        Returns:
-            bool: 是否更新成功
-        """
-        try:
-            # 更新IP黑白名单
-            if 'ip_blacklist' in new_rules:
-                self.rules['ip_blacklist'] = set(new_rules['ip_blacklist'])
-                
-            if 'ip_whitelist' in new_rules:
-                self.rules['ip_whitelist'] = set(new_rules['ip_whitelist'])
-                
-            # 更新端口黑白名单
-            if 'port_blacklist' in new_rules:
-                self.rules['port_blacklist'] = set(new_rules['port_blacklist'])
-                
-            if 'port_whitelist' in new_rules:
-                self.rules['port_whitelist'] = set(new_rules['port_whitelist'])
-                
-            # 更新内容过滤规则
-            if 'content_filters' in new_rules:
-                self.rules['content_filters'] = new_rules['content_filters']
-                
-            # 更新协议过滤规则
-            if 'protocol_filter' in new_rules:
-                self.rules['protocol_filter'] = new_rules['protocol_filter']
-                
-            # 保存更新后的规则
-            return self.save_rules()
-        except Exception as e:
-            logger.error(f"更新规则失败: {e}")
-            return False
-            
-    # Removed _is_valid_ip_or_cidr and _is_valid_port_or_range, using utils now
+    # --- Rule Manipulation Methods ---
+    # These methods modify the in-memory self.rules and then save.
 
-    def _validate_loaded_rules(self, rules: Dict) -> Dict:
-        """验证从文件加载的规则的有效性"""
-        validated_rules = self._load_default_rules() # Start with defaults
-
-        # Validate IP lists
-        for key in ['ip_blacklist', 'ip_whitelist']:
-            if key in rules:
-                # Use imported validation function
-                valid_ips = {ip for ip in rules[key] if is_valid_ip_or_cidr(ip)} 
-                invalid_count = len(rules[key]) - len(valid_ips)
-                if invalid_count > 0:
-                    logger.warning(f"加载规则时发现 {invalid_count} 个无效的IP/CIDR条目在 {key} 中，已忽略。")
-                validated_rules[key] = valid_ips
-
-        # Validate Port lists (now allows strings for ranges)
-        for key in ['port_blacklist', 'port_whitelist']:
-             if key in rules:
-                # Convert all items to string first for consistent validation
-                items_as_str = [str(item) for item in rules[key]]
-                # Use imported validation function
-                valid_ports = {item for item in items_as_str if is_valid_port_or_range(item)} 
-                invalid_count = len(items_as_str) - len(valid_ports)
-                if invalid_count > 0:
-                    logger.warning(f"加载规则时发现 {invalid_count} 个无效的端口/范围条目在 {key} 中，已忽略。")
-                validated_rules[key] = valid_ports # Store validated strings
-
-        # Validate Content Filters (basic check for string type)
-        if 'content_filters' in rules:
-            valid_filters = [f for f in rules['content_filters'] if isinstance(f, str)]
-            invalid_count = len(rules['content_filters']) - len(valid_filters)
-            if invalid_count > 0:
-                 logger.warning(f"加载规则时发现 {invalid_count} 个无效的内容过滤器条目（非字符串），已忽略。")
-            validated_rules['content_filters'] = valid_filters
-            # Further regex validation could be added here if needed
-
-        # Validate Protocol Filter
-        if 'protocol_filter' in rules and isinstance(rules['protocol_filter'], dict):
-            valid_proto_filter = {}
-            for proto, enabled in rules['protocol_filter'].items():
-                if isinstance(proto, str) and proto.lower() in ['tcp', 'udp'] and isinstance(enabled, bool):
-                    valid_proto_filter[proto.lower()] = enabled
-                else:
-                    logger.warning(f"加载规则时发现无效的协议过滤条目: {proto}={enabled}，已忽略。")
-            validated_rules['protocol_filter'] = valid_proto_filter
-        
-        return validated_rules
-
-    # IP黑白名单管理
     def add_ip_to_blacklist(self, ip: str) -> bool:
-        """添加IP到黑名单
-        
-        Args:
-            ip: IP地址或CIDR
-            
-        Returns:
-            bool: 是否添加成功
-        """
-        # Use imported validation function
         if not is_valid_ip_or_cidr(ip): 
             logger.warning(f"尝试添加无效的IP/CIDR到黑名单: {ip}")
             return False
-            
-        try:
-            if ip not in self.rules['ip_blacklist']:
-                self.rules['ip_blacklist'].add(ip)
-                self.save_rules()
-                logger.info(f"IP/CIDR '{ip}' 已添加到黑名单。")
+        if ip not in self.rules['ip_blacklist']:
+            self.rules['ip_blacklist'].add(ip)
+            if self._save_rules_to_storage():
+                logger.info(f"IP/CIDR '{ip}' 已添加到黑名单并保存。")
                 return True
             else:
-                logger.info(f"IP/CIDR '{ip}' 已存在于黑名单中。")
-                return True # Already exists, consider it success
-        except Exception as e:
-            logger.error(f"添加IP到黑名单时出错: {e}")
-            return False
+                # Rollback memory change if save failed? Optional.
+                self.rules['ip_blacklist'].discard(ip) 
+                return False
+        else:
+            logger.info(f"IP/CIDR '{ip}' 已存在于黑名单中。")
+            return True 
             
     def remove_ip_from_blacklist(self, ip: str) -> bool:
-        """从黑名单移除IP
-        
-        Args:
-            ip: IP地址或CIDR
-            
-        Returns:
-            bool: 是否移除成功
-        """
-        try:
-            if ip in self.rules['ip_blacklist']:
-                self.rules['ip_blacklist'].remove(ip)
-                self.save_rules()
-                logger.info(f"IP/CIDR '{ip}' 已从黑名单移除。")
+        if ip in self.rules['ip_blacklist']:
+            self.rules['ip_blacklist'].discard(ip) # Use discard to avoid error if not present
+            if self._save_rules_to_storage():
+                logger.info(f"IP/CIDR '{ip}' 已从黑名单移除并保存。")
+                return True
             else:
-                 logger.info(f"IP/CIDR '{ip}' 不在黑名单中。")
-            return True
-        except Exception as e:
-            logger.error(f"从黑名单移除IP时出错: {e}")
-            return False
-            
+                # Rollback?
+                # self.rules['ip_blacklist'].add(ip) 
+                return False
+        else:
+             logger.info(f"IP/CIDR '{ip}' 不在黑名单中。")
+             return True # Consider removal of non-existent item a success
+
     def add_ip_to_whitelist(self, ip: str) -> bool:
-        """添加IP到白名单
-        
-        Args:
-            ip: IP地址或CIDR
-            
-        Returns:
-            bool: 是否添加成功
-        """
-        # Use imported validation function
         if not is_valid_ip_or_cidr(ip): 
             logger.warning(f"尝试添加无效的IP/CIDR到白名单: {ip}")
             return False
-            
-        try:
-            if ip not in self.rules['ip_whitelist']:
-                self.rules['ip_whitelist'].add(ip)
-                self.save_rules()
-                logger.info(f"IP/CIDR '{ip}' 已添加到白名单。")
+        if ip not in self.rules['ip_whitelist']:
+            self.rules['ip_whitelist'].add(ip)
+            if self._save_rules_to_storage():
+                logger.info(f"IP/CIDR '{ip}' 已添加到白名单并保存。")
                 return True
             else:
-                logger.info(f"IP/CIDR '{ip}' 已存在于白名单中。")
-                return True # Already exists, consider it success
-        except Exception as e:
-            logger.error(f"添加IP到白名单时出错: {e}")
-            return False
-            
-    def remove_ip_from_whitelist(self, ip: str) -> bool:
-        """从白名单移除IP
-        
-        Args:
-            ip: IP地址或CIDR
-            
-        Returns:
-            bool: 是否移除成功
-        """
-        try:
-            if ip in self.rules['ip_whitelist']:
-                self.rules['ip_whitelist'].remove(ip)
-                self.save_rules()
-                logger.info(f"IP/CIDR '{ip}' 已从白名单移除。")
-            else:
-                logger.info(f"IP/CIDR '{ip}' 不在白名单中。")
+                self.rules['ip_whitelist'].discard(ip)
+                return False
+        else:
+            logger.info(f"IP/CIDR '{ip}' 已存在于白名单中。")
             return True
-        except Exception as e:
-            logger.error(f"从白名单移除IP时出错: {e}")
+
+    def remove_ip_from_whitelist(self, ip: str) -> bool:
+        if ip in self.rules['ip_whitelist']:
+            self.rules['ip_whitelist'].discard(ip)
+            if self._save_rules_to_storage():
+                logger.info(f"IP/CIDR '{ip}' 已从白名单移除并保存。")
+                return True
+            else:
+                # self.rules['ip_whitelist'].add(ip)
+                return False
+        else:
+            logger.info(f"IP/CIDR '{ip}' 不在白名单中。")
+            return True
+
+    def add_port_to_blacklist(self, port: Union[int, str]) -> bool:
+        port_str = str(port)
+        if not is_valid_port_or_range(port_str): 
+            logger.warning(f"尝试添加无效的端口/范围到黑名单: {port_str}")
+            return False
+        if port_str not in self.rules['port_blacklist']:
+            self.rules['port_blacklist'].add(port_str)
+            if self._save_rules_to_storage():
+                logger.info(f"端口/范围 '{port_str}' 已添加到黑名单并保存。")
+                return True
+            else:
+                self.rules['port_blacklist'].discard(port_str)
+                return False
+        else:
+            logger.info(f"端口/范围 '{port_str}' 已存在于黑名单中。")
+            return True
+
+    def remove_port_from_blacklist(self, port: Union[int, str]) -> bool:
+        port_str = str(port)
+        if port_str in self.rules['port_blacklist']:
+            self.rules['port_blacklist'].discard(port_str)
+            if self._save_rules_to_storage():
+                logger.info(f"端口/范围 '{port_str}' 已从黑名单移除并保存。")
+                return True
+            else:
+                # self.rules['port_blacklist'].add(port_str)
+                return False
+        else:
+            logger.info(f"端口/范围 '{port_str}' 不在黑名单中。")
+            return True
+
+    def add_port_to_whitelist(self, port: Union[int, str]) -> bool:
+        port_str = str(port)
+        if not is_valid_port_or_range(port_str): 
+            logger.warning(f"尝试添加无效的端口/范围到白名单: {port_str}")
+            return False
+        if port_str not in self.rules['port_whitelist']:
+            self.rules['port_whitelist'].add(port_str)
+            if self._save_rules_to_storage():
+                logger.info(f"端口/范围 '{port_str}' 已添加到白名单并保存。")
+                return True
+            else:
+                self.rules['port_whitelist'].discard(port_str)
+                return False
+        else:
+            logger.info(f"端口/范围 '{port_str}' 已存在于白名单中。")
+            return True
+
+    def remove_port_from_whitelist(self, port: Union[int, str]) -> bool:
+        port_str = str(port)
+        if port_str in self.rules['port_whitelist']:
+            self.rules['port_whitelist'].discard(port_str)
+            if self._save_rules_to_storage():
+                logger.info(f"端口/范围 '{port_str}' 已从白名单移除并保存。")
+                return True
+            else:
+                # self.rules['port_whitelist'].add(port_str)
+                return False
+        else:
+            logger.info(f"端口/范围 '{port_str}' 不在白名单中。")
+            return True
+
+    def add_content_filter(self, pattern: str) -> bool:
+        if not isinstance(pattern, str) or not pattern:
+             logger.warning("尝试添加空的或非字符串内容过滤器。")
+             return False
+        try:
+            re.compile(pattern) # Validate regex before adding
+        except re.error as regex_err:
+            logger.error(f"添加内容过滤规则失败: 无效的正则表达式 '{pattern}' - {regex_err}")
             return False
             
+        if pattern not in self.rules['content_filters']:
+            self.rules['content_filters'].append(pattern)
+            if self._save_rules_to_storage():
+                logger.info(f"内容过滤规则 '{pattern}' 已添加并保存。")
+                return True
+            else:
+                self.rules['content_filters'].remove(pattern) # Rollback
+                return False
+        else:
+            logger.info(f"内容过滤规则 '{pattern}' 已存在。")
+            return True
+
+    def remove_content_filter(self, pattern: str) -> bool:
+        if pattern in self.rules['content_filters']:
+            self.rules['content_filters'].remove(pattern)
+            if self._save_rules_to_storage():
+                logger.info(f"内容过滤规则 '{pattern}' 已移除并保存。")
+                return True
+            else:
+                self.rules['content_filters'].append(pattern) # Rollback
+                return False
+        else:
+            logger.info(f"内容过滤规则 '{pattern}' 不存在。")
+            return True
+            
+    def set_protocol_filter(self, protocol: str, enabled: bool) -> bool:
+        proto_lower = protocol.lower()
+        if proto_lower not in ['tcp', 'udp']:
+            logger.warning(f"无效的协议用于过滤: {protocol}")
+            return False
+        if not isinstance(enabled, bool):
+             logger.warning(f"无效的启用值 (非布尔值) for protocol filter '{protocol}': {enabled}")
+             return False
+
+        if self.rules['protocol_filter'].get(proto_lower) != enabled:
+            self.rules['protocol_filter'][proto_lower] = enabled
+            if self._save_rules_to_storage():
+                logger.info(f"{proto_lower.upper()} 协议过滤已设置为 {enabled} 并保存。")
+                return True
+            else:
+                # Rollback
+                self.rules['protocol_filter'][proto_lower] = not enabled 
+                return False
+        else:
+            logger.info(f"{proto_lower.upper()} 协议过滤已是 {enabled}。")
+            return True
+
+    # --- Import/Export Methods ---
+    # These still make sense here as they operate on the rule set as a whole
+
     def export_ip_list(self, list_type: str, filename: str) -> bool:
         """导出IP列表到文件 (一行一个IP/CIDR)"""
         if list_type not in ['blacklist', 'whitelist']:
@@ -324,6 +252,8 @@ class RuleManager:
              return False
 
         try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
             with open(filename, 'w', encoding='utf-8') as f:
                 # Sort for consistency
                 sorted_list = sorted(list(self.rules[key]))
@@ -361,19 +291,25 @@ class RuleManager:
                     if not ip or ip.startswith('#'): # Skip empty lines and comments
                         continue
                         
-                    # Use imported validation function
                     if is_valid_ip_or_cidr(ip): 
                         if ip not in self.rules[key]:
                             added_ips.add(ip)
-                            imported_count += 1
+                            # Don't increment count until save succeeds
                     else:
                         invalid_count += 1
                         logger.warning(f"导入时跳过无效IP/CIDR: {ip}")
             
             if added_ips:
+                original_set = self.rules[key].copy() # Keep original for potential rollback
                 self.rules[key].update(added_ips)
-                self.save_rules()
-                logger.info(f"成功从 {filename} 导入 {imported_count} 个IP/CIDR到 {list_type}。")
+                if self._save_rules_to_storage():
+                    imported_count = len(added_ips)
+                    logger.info(f"成功从 {filename} 导入 {imported_count} 个IP/CIDR到 {list_type}。")
+                else:
+                    # Rollback memory change if save failed
+                    self.rules[key] = original_set 
+                    logger.error("保存导入的规则失败，内存更改已回滚。")
+                    return False, 0, invalid_count
             else:
                  logger.info(f"从 {filename} 未导入新的IP/CIDR到 {list_type}。")
 
@@ -386,179 +322,6 @@ class RuleManager:
             logger.error(f"从 {filename} 导入IP {list_type} 时出错: {e}")
             return False, 0, invalid_count
 
-    # TODO: 添加IP地址范围验证功能 (Lower Priority - CIDR done)
-    # TODO: 添加IP地理位置支持 (Lower Priority)
-            
-    # 端口黑白名单管理
-    def add_port_to_blacklist(self, port: int) -> bool:
-        """添加端口到黑名单
-        
-        Args:
-            port: 端口号或范围字符串 (e.g., 80, "8000-8080")
-            
-        Returns:
-            bool: 是否添加成功
-        """
-        port_str = str(port) # Ensure string format
-        # Use imported validation function
-        if not is_valid_port_or_range(port_str): 
-            logger.warning(f"尝试添加无效的端口/范围到黑名单: {port_str}")
-            return False
-            
-        try:
-            if port_str not in self.rules['port_blacklist']:
-                self.rules['port_blacklist'].add(port_str)
-                self.save_rules()
-                logger.info(f"端口/范围 '{port_str}' 已添加到黑名单。")
-                return True
-            else:
-                logger.info(f"端口/范围 '{port_str}' 已存在于黑名单中。")
-                return True # Already exists
-        except Exception as e:
-            logger.error(f"添加端口/范围到黑名单时出错: {e}")
-            return False
-            
-    def remove_port_from_blacklist(self, port: int) -> bool:
-        """从黑名单移除端口
-        
-        Args:
-            port: 端口号或范围字符串
-            
-        Returns:
-            bool: 是否移除成功
-        """
-        port_str = str(port) # Ensure string format
-        try:
-            if port_str in self.rules['port_blacklist']:
-                self.rules['port_blacklist'].remove(port_str)
-                self.save_rules()
-                logger.info(f"端口/范围 '{port_str}' 已从黑名单移除。")
-            else:
-                logger.info(f"端口/范围 '{port_str}' 不在黑名单中。")
-            return True
-        except Exception as e:
-            logger.error(f"从黑名单移除端口/范围时出错: {e}")
-            return False
-            
-    def add_port_to_whitelist(self, port: int) -> bool:
-        """添加端口到白名单
-        
-        Args:
-            port: 端口号或范围字符串
-            
-        Returns:
-            bool: 是否添加成功
-        """
-        port_str = str(port) # Ensure string format
-        # Use imported validation function
-        if not is_valid_port_or_range(port_str): 
-            logger.warning(f"尝试添加无效的端口/范围到白名单: {port_str}")
-            return False
-            
-        try:
-            if port_str not in self.rules['port_whitelist']:
-                self.rules['port_whitelist'].add(port_str)
-                self.save_rules()
-                logger.info(f"端口/范围 '{port_str}' 已添加到白名单。")
-                return True
-            else:
-                logger.info(f"端口/范围 '{port_str}' 已存在于白名单中。")
-                return True # Already exists
-        except Exception as e:
-            logger.error(f"添加端口/范围到白名单时出错: {e}")
-            return False
-            
-    def remove_port_from_whitelist(self, port: int) -> bool:
-        """从白名单移除端口
-        
-        Args:
-            port: 端口号或范围字符串
-            
-        Returns:
-            bool: 是否移除成功
-        """
-        port_str = str(port) # Ensure string format
-        try:
-            if port_str in self.rules['port_whitelist']:
-                self.rules['port_whitelist'].remove(port_str)
-                self.save_rules()
-                logger.info(f"端口/范围 '{port_str}' 已从白名单移除。")
-            else:
-                logger.info(f"端口/范围 '{port_str}' 不在白名单中。")
-            return True
-        except Exception as e:
-            logger.error(f"从白名单移除端口/范围时出错: {e}")
-            return False
-            
-    # TODO: 添加端口分组管理功能 (Lower Priority)
-    # TODO: 添加常用服务端口预设功能 (Lower Priority)
-            
-    # 内容过滤规则管理
-    def add_content_filter(self, pattern: str) -> bool:
-        """添加内容过滤规则
-        
-        Args:
-            pattern: 内容匹配模式
-            
-        Returns:
-            bool: 是否添加成功
-        """
-        try:
-            if pattern and pattern not in self.rules['content_filters']:
-                # 验证正则表达式有效性
-                re.compile(pattern)
-                self.rules['content_filters'].append(pattern)
-                self.save_rules()
-                logger.info(f"内容过滤规则 '{pattern}' 已添加。") # Corrected log message
-                return True
-            elif pattern in self.rules['content_filters']:
-                 logger.info(f"内容过滤规则 '{pattern}' 已存在。")
-                 return True # Already exists
-            else: # pattern is empty or None
-                 return False
-        except re.error as regex_err:
-            logger.error(f"添加内容过滤规则失败: 无效的正则表达式 '{pattern}' - {regex_err}")
-            return False
-        except Exception as e:
-            logger.error(f"添加内容过滤规则时出错: {e}")
-            return False
-            
-    def remove_content_filter(self, pattern: str) -> bool:
-        """移除内容过滤规则
-        
-        Args:
-            pattern: 内容匹配模式
-            
-        Returns:
-            bool: 是否移除成功
-        """
-        try:
-            if pattern in self.rules['content_filters']:
-                self.rules['content_filters'].remove(pattern)
-                self.save_rules()
-                logger.info(f"内容过滤规则 '{pattern}' 已移除。") # Added log message
-            else:
-                logger.info(f"内容过滤规则 '{pattern}' 不存在。")
-            return True
-        except Exception as e:
-            logger.error(f"移除内容过滤规则时出错: {e}")
-            return False
-            
-    # TODO: 添加高级模式匹配功能 (Lower Priority)
-    # TODO: 添加内容过滤规则分类功能 (Lower Priority)
-    # TODO: 添加内容过滤规则优先级功能 (Lower Priority)
-        
-    def set_protocol_filter(self, protocol: str, enabled: bool) -> bool:
-        """设置协议过滤规则
-        
-        Args:
-            protocol: 协议名称（tcp/udp）
-            enabled: 是否启用
-            
-        Returns:
-            bool: 是否设置成功
-        """
-        if protocol.lower() in self.rules['protocol_filter']:
-            self.rules['protocol_filter'][protocol.lower()] = enabled
-            return self.save_rules()
-        return False
+    # Removed _load_rules, save_rules (using _save_rules_to_storage), 
+    # _load_default_rules, _validate_loaded_rules
+    # Removed validation methods (_is_valid_ip_or_cidr, _is_valid_port_or_range)

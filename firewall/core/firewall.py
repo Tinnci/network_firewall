@@ -1,13 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import os
-import sys
 import time
 import logging
-import re
-from typing import Dict, List, Tuple, Optional, Callable, Any, Union 
-from PyQt6.QtCore import QObject, pyqtSignal # Keep QObject inheritance for signals
+from typing import Dict, Any, Union 
+from PyQt6.QtCore import QObject # Keep QObject inheritance for signals
 
 # Import from local modules
 from .rule_manager import RuleManager
@@ -15,7 +12,7 @@ from .packet_interceptor import PacketInterceptor
 from .packet_analyzer import PacketAnalyzer
 from .packet_processor import PacketProcessor
 # Import from utils
-from ..utils.logging_utils import setup_logging, SignalHandler, clear_signal_handler_on_exit
+from ..utils.logging_utils import setup_logging, SignalHandler
 from ..utils.performance_utils import get_system_resource_usage
 
 # Setup logging and get the signal handler instance

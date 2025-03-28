@@ -5,14 +5,12 @@
 网络防火墙主程序
 """
 
-import os
 import sys
 import ctypes
 import traceback
 import logging # Added logging import
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
-from PyQt6.QtCore import Qt
 
 # Import necessary components
 from firewall.ui.main_window import MainWindow
