@@ -7,6 +7,7 @@ import time
 import ctypes
 import re
 from .helpers import rule_helper
+import logging
 
 LOG_FILE_PATH = "logs/firewall.log"
 # 根据 firewall.core.packet_interceptor 的日志，或者 main.py 中更早的、可靠的启动完成标志
@@ -57,11 +58,15 @@ def firewall_service(request):
     """会话级别的fixture，用于启动和停止防火墙主程序 (main.py)"""
     print("\n启动防火墙服务 (main.py)...")
     firewall_process = None
+    original_env_value = os.environ.get('FIREWALL_EFFECTIVE_SKIP_LOCAL')
+    os.environ['FIREWALL_EFFECTIVE_SKIP_LOCAL'] = "0"
+    print("Conftest: Set FIREWALL_EFFECTIVE_SKIP_LOCAL=0 for testing.")
 
     # 确保在启动防火墙前日志是干净的，以便准确检测启动消息
     clear_log_file_for_startup()
 
     try:
+        # 为测试设置环境变量，以禁用 skip_local_packets
         # 使用 sys.executable 确保使用的是与 pytest 相同的 Python 解释器
         # CREATE_NEW_CONSOLE 可以在新窗口中显示防火墙UI和日志，方便调试
         # 若不希望新窗口，可以移除 creationflags 或使用 subprocess.DEVNULL
@@ -130,6 +135,15 @@ def firewall_service(request):
              print(f"防火墙进程已自行停止，返回码: {firewall_process.returncode}")
         else:
             print("防火墙进程未成功启动或已被处理。")
+
+        # 清理/恢复环境变量
+        if original_env_value is None:
+            if 'FIREWALL_EFFECTIVE_SKIP_LOCAL' in os.environ:
+                del os.environ['FIREWALL_EFFECTIVE_SKIP_LOCAL']
+                print("Conftest: Cleared FIREWALL_EFFECTIVE_SKIP_LOCAL environment variable.")
+        else:
+            os.environ['FIREWALL_EFFECTIVE_SKIP_LOCAL'] = original_env_value
+            print(f"Conftest: Restored FIREWALL_EFFECTIVE_SKIP_LOCAL to original value: '{original_env_value}'.")
 
 # 现有的 manage_rules fixture 保持不变，它会在每个测试函数级别运行
 @pytest.fixture(scope="function")

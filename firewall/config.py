@@ -112,6 +112,25 @@ def load_config_from_file(filepath: str = "config.yaml") -> Dict:
         level_str = config["logging"]["signal_level"].upper()
         config["logging"]["signal_level"] = log_level_map.get(level_str, logging.DEBUG)
         
+    # Environment variable override for skip_local_packets during testing
+    env_skip_local_override = os.environ.get('FIREWALL_EFFECTIVE_SKIP_LOCAL')
+    if env_skip_local_override is not None:
+        effective_skip_local_value = config['performance'].get('skip_local_packets', True) # Get current or default
+        new_skip_local_value = effective_skip_local_value
+
+        if env_skip_local_override.lower() in ('0', 'false', 'no'):
+            new_skip_local_value = False
+        elif env_skip_local_override.lower() in ('1', 'true', 'yes'):
+            new_skip_local_value = True
+        else:
+            logger.warning(f"FIREWALL_EFFECTIVE_SKIP_LOCAL has unrecognized value '{env_skip_local_override}'. Will use normally configured 'skip_local_packets'.")
+
+        if new_skip_local_value != effective_skip_local_value:
+            logger.info(f"FIREWALL_EFFECTIVE_SKIP_LOCAL is '{env_skip_local_override}', overriding 'skip_local_packets' from {effective_skip_local_value} to {new_skip_local_value}.")
+            config['performance']['skip_local_packets'] = new_skip_local_value
+        elif os.environ.get('FIREWALL_EFFECTIVE_SKIP_LOCAL'): # Log even if not changing, but env var is set
+            logger.info(f"FIREWALL_EFFECTIVE_SKIP_LOCAL is '{env_skip_local_override}'. 'skip_local_packets' remains {effective_skip_local_value}.")
+
     # Add more validation as needed for other sections
 
     return config
