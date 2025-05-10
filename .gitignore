@@ -57,3 +57,7 @@ coverage.xml
 /config.local.yaml
 /data/
 test_data/
+
+# 测试文件
+logs/
+tests/screenshots/

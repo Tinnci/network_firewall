@@ -1,0 +1,76 @@
+// 防火墙系统架构图
+digraph Firewall_System_Architecture {
+	fontsize=20 label="防火墙系统架构图" labelloc=t rankdir=TB
+	graph [fontname="Microsoft YaHei"]
+	node [fontname="Microsoft YaHei"]
+	edge [fontname="Microsoft YaHei"]
+	MainWindow -> IpFilterTab [label="管理"]
+	MainWindow -> PortFilterTab [label="管理"]
+	MainWindow -> ContentFilterTab [label="管理"]
+	MainWindow -> TrafficMonitorTab [label="管理"]
+	MainWindow -> LogTab [label="管理"]
+	MainWindow -> PerformanceTab [label="管理"]
+	MainWindow -> AdvancedSettingsTab [label="管理"]
+	subgraph cluster_ui {
+		color=skyblue label="用户界面层 (UI Layer)" style=filled
+		MainWindow [color=red fillcolor=lightblue penwidth=2.0 shape=box style=filled]
+		IpFilterTab [label="IP过滤标签页" fillcolor=lightblue shape=box style=filled]
+		PortFilterTab [label="端口过滤标签页" fillcolor=lightblue shape=box style=filled]
+		ContentFilterTab [label="内容过滤标签页" fillcolor=lightblue shape=box style=filled]
+		TrafficMonitorTab [label="流量监控标签页" fillcolor=lightblue shape=box style=filled]
+		LogTab [label="日志标签页" fillcolor=lightblue shape=box style=filled]
+		PerformanceTab [label="性能监控标签页" fillcolor=lightblue shape=box style=filled]
+		AdvancedSettingsTab [label="高级设置标签页" fillcolor=lightblue shape=box style=filled]
+	}
+	FirewallCore -> PacketInterceptor [label="控制"]
+	FirewallCore -> RuleManager [label="使用/更新"]
+	FirewallCore -> PacketAnalyzer [label="配置"]
+	FirewallCore -> PacketProcessor [label="控制/配置"]
+	RuleManager -> RuleStorage [label="调用"]
+	RuleManager -> RuleValidator [label="调用"]
+	PacketInterceptor -> PacketProcessor [label="传递数据包"]
+	PacketProcessor -> PacketAnalyzer [label="请求分析"]
+	PacketAnalyzer -> RuleManager [label="获取规则"]
+	PacketProcessor -> PacketInterceptor [label="发送/丢弃决策"]
+	subgraph cluster_core {
+		color=palegreen label="核心逻辑层 (Core Logic Layer)" style=filled
+		FirewallCore [label="Firewall 主控" color=red fillcolor=lightgreen penwidth=2.0 shape=box style=filled]
+		PacketInterceptor [color=red fillcolor=lightgreen penwidth=2.0 shape=box style=filled]
+		RuleManager [color=red fillcolor=lightgreen penwidth=2.0 shape=box style=filled]
+		RuleStorage [label="RuleStorage (规则存储)" fillcolor=lightgreen shape=box style=filled]
+		RuleValidator [label="RuleValidator (规则验证)" fillcolor=lightgreen shape=box style=filled]
+		PacketAnalyzer [color=red fillcolor=lightgreen penwidth=2.0 shape=box style=filled]
+		PacketProcessor [color=red fillcolor=lightgreen penwidth=2.0 shape=box style=filled]
+	}
+	subgraph cluster_utils {
+		color=khaki label="工具与配置层 (Utilities & Config)" style=filled
+		ConfigLoader [label="Config (配置加载)" fillcolor=lightyellow shape=box style=filled]
+		LoggingUtils [fillcolor=lightyellow shape=box style=filled]
+		NetworkUtils [fillcolor=lightyellow shape=box style=filled]
+		PerformanceUtils [fillcolor=lightyellow shape=box style=filled]
+	}
+	subgraph cluster_data {
+		color=lightgrey label="数据存储 (Data Storage)" style=filled
+		"rules.yaml" [fillcolor=lightgray shape=cylinder style=filled]
+		"config.yaml" [fillcolor=lightgray shape=cylinder style=filled]
+		"firewall.log" [label="logs/firewall.log" fillcolor=lightgray shape=cylinder style=filled]
+	}
+	subgraph cluster_os {
+		color=peachpuff label="操作系统/驱动 (OS/Driver)" style=filled
+		PyDivert [label="PyDivert/WinDivert 驱动" color=red fillcolor=orange penwidth=2.0 shape=box style=filled]
+		NetworkStack [label="操作系统网络协议栈" fillcolor=orange shape=box style=filled]
+	}
+	MainWindow -> FirewallCore [label="用户操作/状态更新"]
+	FirewallCore -> LoggingUtils [label="记录日志"]
+	FirewallCore -> ConfigLoader [label="读取配置"]
+	RuleManager -> "rules.yaml" [label="读/写"]
+	ConfigLoader -> "config.yaml" [label="读取"]
+	LoggingUtils -> "firewall.log" [label="写入"]
+	LoggingUtils -> LogTab [label="显示日志 (通过信号)"]
+	PacketInterceptor -> PyDivert [label="使用 (捕获/注入)"]
+	PyDivert -> NetworkStack [label="交互"]
+	PerformanceUtils -> PerformanceTab [label="提供数据"]
+	NetworkUtils -> RuleValidator [label="提供验证函数"]
+	NetworkUtils -> PacketAnalyzer [label="提供验证函数"]
+	PacketProcessor -> TrafficMonitorTab [label="更新流量 (通过信号)"]
+}

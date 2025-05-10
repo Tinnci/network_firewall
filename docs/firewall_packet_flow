@@ -1,0 +1,68 @@
+// 防火墙数据包处理流程图
+digraph Firewall_Packet_Flow {
+	fontsize=20 label="防火墙数据包处理流程图" labelloc=t rankdir=TB
+	graph [fontname="Microsoft YaHei"]
+	node [fontname="Microsoft YaHei"]
+	edge [fontname="Microsoft YaHei"]
+	A [label="网络数据包到达
+(来自网络协议栈)" fillcolor=lightblue shape=parallelogram style=filled]
+	B [label="PyDivert驱动捕获数据包" shape=box style=rounded]
+	C [label="PacketInterceptor接收数据包" color=red penwidth=2.0 shape=box style=rounded]
+	D [label="PacketProcessor.handle_packet()" shape=box style=rounded]
+	E [label="PacketAnalyzer.should_pass()
+(规则匹配引擎)" color=red penwidth=2.0 shape=box style=rounded]
+	F_PROTO [label="1. 协议过滤 (TCP/UDP)?" color=red fillcolor=lightyellow penwidth=2.0 shape=diamond style=filled]
+	F_IP_WL [label="2. IP白名单匹配?" color=red fillcolor=lightyellow penwidth=2.0 shape=diamond style=filled]
+	F_IP_BL [label="3. IP黑名单匹配?" color=red fillcolor=lightyellow penwidth=2.0 shape=diamond style=filled]
+	F_PORT_WL [label="4. 端口白名单匹配?" color=red fillcolor=lightyellow penwidth=2.0 shape=diamond style=filled]
+	F_PORT_BL [label="5. 端口黑名单匹配?" color=red fillcolor=lightyellow penwidth=2.0 shape=diamond style=filled]
+	F_CONTENT [label="6. 内容过滤匹配?" color=red fillcolor=lightyellow penwidth=2.0 shape=diamond style=filled]
+	G_ALLOW_IP_WL [label="标记: 放行 (IP白名单)" fillcolor=lightgreen shape=ellipse style=filled]
+	G_ALLOW_PORT_WL [label="标记: 放行 (端口白名单)" fillcolor=lightgreen shape=ellipse style=filled]
+	G_ALLOW_DEFAULT [label="标记: 放行 (默认)" fillcolor=lightgreen shape=ellipse style=filled]
+	G_BLOCK [label="标记: 拦截" fillcolor=lightgreen shape=ellipse style=filled]
+	H [label="PacketAnalyzer返回分析结果
+(放行/拦截)" shape=box style=rounded]
+	I [label="PacketProcessor执行动作" color=red penwidth=2.0 shape=box style=rounded]
+	J_DECISION [label="结果是\"放行\"?" color=red fillcolor=lightyellow penwidth=2.0 shape=diamond style=filled]
+	K_SEND [label="调用 _send_packet_safe()" shape=box style=rounded]
+	L_INTERCEPTOR_SEND [label="PacketInterceptor.send()" shape=box style=rounded]
+	M_PYDIVERT_SEND [label="PyDivert注入数据包" shape=box style=rounded]
+	N_PACKET_OUT [label="数据包发出至网络" color=red fillcolor=lightblue penwidth=2.0 shape=parallelogram style=filled]
+	O_DROP [label="数据包丢弃" color=red fillcolor=lightgreen penwidth=2.0 shape=ellipse style=filled]
+	P [label="PacketProcessor更新统计" shape=box style=rounded]
+	Q [label="调用回调 (Firewall -> MainWindow -> UI)" shape=box style=rounded]
+	R [label="UI界面更新 (流量/日志)" color=red fillcolor=lightblue penwidth=2.0 shape=parallelogram style=filled]
+	A -> B
+	B -> C
+	C -> D
+	D -> E
+	E -> F_PROTO
+	F_PROTO -> G_BLOCK [label="不允许的协议"]
+	F_PROTO -> F_IP_WL [label="允许的协议"]
+	F_IP_WL -> G_ALLOW_IP_WL [label="是 (匹配白名单)"]
+	F_IP_WL -> F_IP_BL [label="否"]
+	F_IP_BL -> G_BLOCK [label="是 (匹配黑名单)"]
+	F_IP_BL -> F_PORT_WL [label="否"]
+	F_PORT_WL -> G_ALLOW_PORT_WL [label="是 (匹配白名单)"]
+	F_PORT_WL -> F_PORT_BL [label="否"]
+	F_PORT_BL -> G_BLOCK [label="是 (匹配黑名单)"]
+	F_PORT_BL -> F_CONTENT [label="否"]
+	F_CONTENT -> G_BLOCK [label="是 (匹配内容)"]
+	F_CONTENT -> G_ALLOW_DEFAULT [label="否 (默认放行)"]
+	G_ALLOW_IP_WL -> H
+	G_ALLOW_PORT_WL -> H
+	G_ALLOW_DEFAULT -> H
+	G_BLOCK -> H
+	H -> I
+	I -> J_DECISION
+	J_DECISION -> K_SEND [label="是 (放行)"]
+	K_SEND -> L_INTERCEPTOR_SEND
+	L_INTERCEPTOR_SEND -> M_PYDIVERT_SEND
+	M_PYDIVERT_SEND -> N_PACKET_OUT
+	J_DECISION -> O_DROP [label="否 (拦截)"]
+	N_PACKET_OUT -> P
+	O_DROP -> P
+	P -> Q
+	Q -> R
+}
