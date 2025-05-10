@@ -9,8 +9,10 @@ import sys
 import ctypes
 import traceback
 import logging # Added logging import
+import os # Added import for os.environ
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtCore import QTimer # Added import for QTimer
 
 # Import necessary components
 from firewall.ui.main_window import MainWindow
@@ -122,6 +124,12 @@ def main():
     window = MainWindow()
     window.show()
     
+    # 如果设置了特定的环境变量 (例如在 conftest.py 中设置)，则自动启动防火墙
+    if os.environ.get("AUTO_START_FIREWALL_FOR_TESTING") == "1":
+        print("Main.py: 检测到 AUTO_START_FIREWALL_FOR_TESTING=1，将自动启动防火墙。")
+        # 需要延迟一点点，确保UI完全加载完毕并且事件循环开始处理
+        QTimer.singleShot(1000, lambda: window._toggle_firewall()) # 延迟1秒尝试启动
+
     # 运行应用程序
     exit_code = app.exec()
     # Ensure handler is removed on normal exit too
