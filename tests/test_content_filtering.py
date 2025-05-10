@@ -40,7 +40,7 @@ def test_content_filter_simple_match_block(manage_rules):
 
     time.sleep(1) # 等待日志写入
     # 调整日志匹配模式以适应您的实际日志输出
-    log_entries = log_parser.find_log_entries(f"拦截.*内容过滤.*{re.escape(keyword_to_block)}", max_lines_to_check=50)
+    log_entries = log_parser.find_log_entries(f"拦截动作: 内容过滤, 规则: {re.escape(keyword_to_block)}", max_lines_to_check=50)
     screenshot_util.take_screenshot("content_filter_block_end")
 
     # 3. 预期结果验证
@@ -74,7 +74,7 @@ def test_content_filter_no_match_allow(manage_rules):
 
 
     time.sleep(1)
-    log_entries_block = log_parser.find_log_entries(f"拦截.*内容过滤.*{re.escape(keyword_to_block)}", max_lines_to_check=20)
+    log_entries_block = log_parser.find_log_entries(f"拦截动作: 内容过滤, 规则: {re.escape(keyword_to_block)}", max_lines_to_check=20)
     # 理想情况下，我们还应该检查是否有"放行"的日志，但这取决于您的日志详细程度
     # log_entries_allow = log_parser.find_log_entries(f"放行.*{TEST_LOCAL_HOST}.*{TEST_LOCAL_PORT}", max_lines_to_check=20)
     screenshot_util.take_screenshot("content_filter_allow_end")

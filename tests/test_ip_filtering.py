@@ -60,7 +60,7 @@ def test_ip_blacklist(manage_rules): # manage_rules fixture 会自动应用
         pass
 
 
-    log_entries = log_parser.find_log_entries(f"拦截.*{re.escape(TEST_EXTERNAL_IP_TO_BLACKLIST)}", max_lines_to_check=50)
+    log_entries = log_parser.find_log_entries(f"拦截动作: IP黑名单, 命中IP: {re.escape(TEST_EXTERNAL_IP_TO_BLACKLIST)}", max_lines_to_check=50)
     screenshot_util.take_screenshot("ip_blacklist_test_end") # 测试结束时截图
 
     # 3. 预期结果验证
@@ -91,13 +91,10 @@ def test_ip_whitelist_over_blacklist(manage_rules):
     print(f"尝试连接到白名单IP {TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET} (同时在黑名单中): {'成功连接' if connection_allowed else '连接失败'}")
 
     time.sleep(1)
-    log_entries_block = log_parser.find_log_entries(f"拦截.*{re.escape(TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET)}", max_lines_to_check=20)
-    log_entries_allow = log_parser.find_log_entries(f"放行.*{re.escape(TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET)}.*Whitelist", max_lines_to_check=20) # 假设白名单放行有特定日志
+    log_entries_block = log_parser.find_log_entries(f"拦截动作: IP黑名单, 命中IP: {re.escape(TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET)}", max_lines_to_check=20)
     screenshot_util.take_screenshot("ip_whitelist_test_end")
 
     # 3. 预期结果验证
     assert connection_allowed, f"预期能够连接到IP {TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET} (因白名单优先)，但连接失败。"
     assert len(log_entries_block) == 0, f"不应在日志中找到针对IP {TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET} 的拦截记录 (因白名单优先)。"
-    # 可选：如果白名单放行有特定日志，可以验证
-    # assert len(log_entries_allow) > 0, f"应在日志中找到针对IP {TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET} 的白名单放行记录。"
     print("IP白名单优先于黑名单测试成功。")

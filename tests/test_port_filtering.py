@@ -42,7 +42,7 @@ def test_port_blacklist_http(manage_rules):
 
     time.sleep(1)
     # 日志模式示例: "拦截 TCP ... DstPort=80"
-    log_entries = log_parser.find_log_entries(f"拦截.*DstPort={TEST_HTTP_PORT}", max_lines_to_check=50)
+    log_entries = log_parser.find_log_entries(f"拦截动作: 端口黑名单, 命中端口: {TEST_HTTP_PORT}", max_lines_to_check=50)
     screenshot_util.take_screenshot("port_blacklist_http_end")
 
     # 3. 预期结果验证
@@ -75,7 +75,9 @@ def test_port_whitelist_https_only(manage_rules):
     print(f"尝试连接到 {TEST_EXTERNAL_HOST}:{TEST_HTTP_PORT} (HTTP): {'成功拦截' if http_blocked else '未拦截/可连接'}")
 
     time.sleep(1)
-    http_block_logs = log_parser.find_log_entries(f"拦截.*DstPort={TEST_HTTP_PORT}", max_lines_to_check=50)
+    # http_block_logs = log_parser.find_log_entries(f"拦截.*DstPort={TEST_HTTP_PORT}", max_lines_to_check=50)
+    # 根据白名单排他性逻辑，这里的日志应该是 "端口未在白名单"
+    http_block_logs = log_parser.find_log_entries(f"拦截动作: 端口未在白名单, .*目标端口: {TEST_HTTP_PORT}", max_lines_to_check=50)
     # 可选：检查HTTPS允许的日志，如果存在这类日志
     # https_allow_logs = log_parser.find_log_entries(f"放行.*DstPort={TEST_HTTPS_PORT}", max_lines_to_check=50)
 
@@ -115,12 +117,14 @@ def test_port_range_blacklist(manage_rules):
 
     time.sleep(1)
     # 检查范围内端口的拦截日志
-    blocked_log_pattern = f"拦截.*DstPort={TEST_RANGE_PORT_BLOCKED}" 
+    # blocked_log_pattern = f"拦截.*DstPort={TEST_RANGE_PORT_BLOCKED}" 
+    blocked_log_pattern = f"拦截动作: 端口黑名单, 命中端口: {TEST_RANGE_PORT_BLOCKED}"
     # 如果防火墙对范围端口的日志记录特定方式，可能需要调整 pattern
     # 例如，如果日志明确提到规则是基于范围的，可以搜索类似 "拦截.*端口范围.*{range_to_block}"
     logs_for_blocked_port = log_parser.find_log_entries(blocked_log_pattern, max_lines_to_check=50)
     # 确保范围外端口没有被意外拦截 (基于此规则)
-    logs_for_allowed_port_check = log_parser.find_log_entries(f"拦截.*DstPort={TEST_RANGE_PORT_ALLOWED}", max_lines_to_check=20)
+    # logs_for_allowed_port_check = log_parser.find_log_entries(f"拦截.*DstPort={TEST_RANGE_PORT_ALLOWED}", max_lines_to_check=20)
+    logs_for_allowed_port_check = log_parser.find_log_entries(f"拦截动作: 端口黑名单, 命中端口: {TEST_RANGE_PORT_ALLOWED}", max_lines_to_check=20)
 
     screenshot_util.take_screenshot(f"port_range_blacklist_end")
 

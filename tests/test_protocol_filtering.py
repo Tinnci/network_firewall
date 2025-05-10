@@ -46,14 +46,18 @@ def test_protocol_filter_allow_tcp_block_udp(manage_rules):
     # 注意：日志模式需要根据实际防火墙日志格式调整
     # 例如: "拦截 UDP ... DstPort=53"
     # 或更通用: "拦截.*UDP.*{TEST_TARGET_HOST}.*{TEST_UDP_PORT}"
-    udp_block_logs = log_parser.find_log_entries(f"拦截.*UDP.*{TEST_TARGET_HOST}.*{TEST_UDP_PORT}", max_lines_to_check=50)
-    tcp_allow_logs = log_parser.find_log_entries(f"放行.*TCP.*{TEST_TARGET_HOST}.*{TEST_TCP_PORT}", max_lines_to_check=50) # 可选
+    # udp_block_logs = log_parser.find_log_entries(f"拦截.*UDP.*{TEST_TARGET_HOST}.*{TEST_UDP_PORT}", max_lines_to_check=50)
+    udp_block_logs = log_parser.find_log_entries(f"拦截动作: 协议过滤 UDP, .*目标IP: {re.escape(TEST_TARGET_HOST)}, .*目标端口: {TEST_UDP_PORT}", max_lines_to_check=50)
+    # tcp_allow_logs = log_parser.find_log_entries(f"放行.*TCP.*{TEST_TARGET_HOST}.*{TEST_TCP_PORT}", max_lines_to_check=50) # 可选
+    # 确保没有TCP拦截日志
+    tcp_block_check_logs = log_parser.find_log_entries(f"拦截动作: 协议过滤 TCP, .*目标IP: {re.escape(TEST_TARGET_HOST)}, .*目标端口: {TEST_TCP_PORT}", max_lines_to_check=20)
 
     screenshot_util.take_screenshot("protocol_tcp_allowed_udp_blocked")
 
     # 3. 预期结果验证
     assert tcp_success, f"TCP通信到 {TEST_TARGET_HOST}:{TEST_TCP_PORT} 应被允许，但失败了。"
     assert len(udp_block_logs) > 0, f"预期在日志中找到UDP包到 {TEST_TARGET_HOST}:{TEST_UDP_PORT} 被拦截的记录。"
+    assert len(tcp_block_check_logs) == 0, f"不应在日志中找到TCP包到 {TEST_TARGET_HOST}:{TEST_TCP_PORT} 被错误拦截的记录。"
     # 可选：如果允许的TCP通信也有日志，可以检查
     # assert len(tcp_allow_logs) > 0, f"预期在日志中找到TCP包到 {TEST_TARGET_HOST}:{TEST_TCP_PORT} 被放行的记录。"
     print(f"协议过滤 - 允许TCP，禁止UDP 测试成功。找到 {len(udp_block_logs)} 条UDP拦截日志。")
@@ -86,9 +90,11 @@ def test_protocol_filter_allow_udp_block_tcp(manage_rules):
 
 
     time.sleep(1) # 等待日志
-    tcp_block_logs = log_parser.find_log_entries(f"拦截.*TCP.*{TEST_TARGET_HOST}.*{TEST_TCP_PORT}", max_lines_to_check=50)
-    udp_allow_logs = log_parser.find_log_entries(f"放行.*UDP.*{TEST_TARGET_HOST}.*{TEST_UDP_PORT}", max_lines_to_check=50) # 可选，如果放行有日志
-    udp_block_check_logs = log_parser.find_log_entries(f"拦截.*UDP.*{TEST_TARGET_HOST}.*{TEST_UDP_PORT}", max_lines_to_check=50) # 确保没有UDP拦截日志
+    # tcp_block_logs = log_parser.find_log_entries(f"拦截.*TCP.*{TEST_TARGET_HOST}.*{TEST_TCP_PORT}", max_lines_to_check=50)
+    tcp_block_logs = log_parser.find_log_entries(f"拦截动作: 协议过滤 TCP, .*目标IP: {re.escape(TEST_TARGET_HOST)}, .*目标端口: {TEST_TCP_PORT}", max_lines_to_check=50)
+    # udp_allow_logs = log_parser.find_log_entries(f"放行.*UDP.*{TEST_TARGET_HOST}.*{TEST_UDP_PORT}", max_lines_to_check=50) # 可选，如果放行有日志
+    # udp_block_check_logs = log_parser.find_log_entries(f"拦截.*UDP.*{TEST_TARGET_HOST}.*{TEST_UDP_PORT}", max_lines_to_check=50) # 确保没有UDP拦截日志
+    udp_block_check_logs = log_parser.find_log_entries(f"拦截动作: 协议过滤 UDP, .*目标IP: {re.escape(TEST_TARGET_HOST)}, .*目标端口: {TEST_UDP_PORT}", max_lines_to_check=20)
 
 
     screenshot_util.take_screenshot("protocol_udp_allowed_tcp_blocked")

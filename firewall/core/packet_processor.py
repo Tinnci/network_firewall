@@ -169,29 +169,32 @@ class PacketProcessor:
         """执行数据包的最终动作（发送或丢弃）并更新统计"""
         self.stats["total_processed"] += 1
         self.stats["last_packet_time"] = time.time()
-        packet_info = self.analyzer.get_packet_info(packet) # Get info before potential modification/send
-
-        action_taken = "pass" if should_pass else "drop"
+        packet_info_full = self.analyzer.get_packet_info(packet) # Get full info
+        reason_for_action = packet_info_full.get('reason', 'N/A') if not should_pass else "符合放行条件"
 
         try:
             if should_pass:
                 # Attempt to send the packet safely
+                logger.debug(f"决定放行: 源={packet_info_full['src_addr']}:{packet_info_full['src_port']}, 目标={packet_info_full['dst_addr']}:{packet_info_full['dst_port']}, 协议={packet_info_full['protocol']}", extra={'log_type': 'packet', 'packet_info': {**packet_info_full, 'action': '放行', 'reason': reason_for_action}})
                 self._send_packet_safe(packet)
                 self.stats["passed"] += 1
             else:
                 # Just update stats for dropped packets
+                logger.info(f"决定拦截: 源={packet_info_full['src_addr']}:{packet_info_full['src_port']}, 目标={packet_info_full['dst_addr']}:{packet_info_full['dst_port']}, 协议={packet_info_full['protocol']}, 原因: {reason_for_action}", extra={'log_type': 'packet', 'packet_info': {**packet_info_full, 'action': '拦截', 'reason': reason_for_action}})
                 self.stats["dropped"] += 1
 
             # Trigger external callback after action is taken (or decided)
             if self.processed_packet_callback:
                 try:
-                    self.processed_packet_callback(packet_info, should_pass)
+                    self.processed_packet_callback(packet_info_full, should_pass)
                 except Exception as cb_exc:
                     logger.error(f"Error in processed_packet_callback: {cb_exc}")
 
         except Exception as e:
             self.stats["errors"] += 1
-            logger.error(f"Failed to process packet action ({action_taken}): {e}")
+            # logger.error(f"Failed to process packet action ({action_taken}): {e}")
+            action_taken_for_log = "放行" if should_pass else "拦截"
+            logger.error(f"Failed to process packet action ({action_taken_for_log}): {e}")
             # Optionally trigger error callback here too
             # if self.error_callback: self.error_callback(e)
 

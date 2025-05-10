@@ -18,7 +18,8 @@ def send_tcp_packet(host: str, port: int, payload: bytes = b"test_data") -> bool
             s.connect((host, port))
             s.sendall(payload) # 发送数据
         return True
-    except (socket.error, socket.timeout):
+    except (socket.error, socket.timeout) as e:
+        print(f"\n[network_helper.send_tcp_packet DEBUG] Socket error for {host}:{port} - Exception: {type(e).__name__}, Details: {e}\n")
         return False
 
 def send_udp_packet(host: str, port: int, payload: bytes = b"test_data") -> bool:

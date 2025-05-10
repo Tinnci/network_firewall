@@ -80,6 +80,21 @@ class PacketAnalyzer:
         Returns:
             bool: True 表示放行，False 表示拦截。
         """
+        # --- BEGIN CRITICAL DEBUG LOG ---
+        logger.critical(f"--- ANALYZER STATE ON PACKET ---")
+        logger.critical(f"IP Blacklist: {self.ip_blacklist}")
+        logger.critical(f"IP Whitelist: {self.ip_whitelist}")
+        logger.critical(f"Port Blacklist: {self.port_blacklist}")
+        logger.critical(f"Port Whitelist: {self.port_whitelist}")
+        logger.critical(f"Protocol Filter: {self.protocol_filter}")
+        logger.critical(f"Content Filters (raw): {self.content_filters}")
+        logger.critical(f"Content Filters (compiled count): {len(self.compiled_content_filters)}")
+        logger.critical(f"Allow Private Network: {self.allow_private_network}")
+        logger.critical(f"Skip Local Packets: {self.skip_local_packets}")
+        packet_info_for_debug = self.get_packet_info(packet)
+        logger.critical(f"Incoming Packet: Src={packet_info_for_debug.get('src_addr')}:{packet_info_for_debug.get('src_port')}, Dst={packet_info_for_debug.get('dst_addr')}:{packet_info_for_debug.get('dst_port')}, Protocol={packet_info_for_debug.get('protocol')}")
+        logger.critical(f"--- END ANALYZER STATE ---")
+        # --- END CRITICAL DEBUG LOG ---
         try:
             # 0. Skip Local Packets if configured
             # Check loopback status first as it's efficient
@@ -101,13 +116,15 @@ class PacketAnalyzer:
                 action = "拦截"
                 reason = "Protocol Filter (TCP)"
                 packet_details = {**packet_details_base, 'action': action, 'reason': reason}
-                logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
+                # logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
+                logger.info(f"拦截动作: 协议过滤 TCP, 源IP: {packet_details_base.get('src_addr', 'N/A')}, 目标IP: {packet_details_base.get('dst_addr', 'N/A')}, 源端口: {packet_details_base.get('src_port', 'N/A')}, 目标端口: {packet_details_base.get('dst_port', 'N/A')}")
                 return False
             if is_udp and not self.protocol_filter.get("udp", True):
                 action = "拦截"
                 reason = "Protocol Filter (UDP)"
                 packet_details = {**packet_details_base, 'action': action, 'reason': reason}
-                logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
+                # logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
+                logger.info(f"拦截动作: 协议过滤 UDP, 源IP: {packet_details_base.get('src_addr', 'N/A')}, 目标IP: {packet_details_base.get('dst_addr', 'N/A')}, 源端口: {packet_details_base.get('src_port', 'N/A')}, 目标端口: {packet_details_base.get('dst_port', 'N/A')}")
                 return False
 
             # 2. IP Address Filtering
@@ -137,9 +154,11 @@ class PacketAnalyzer:
             # Blacklist check
             if self._check_ip_rules(src_ip, self.ip_blacklist) or self._check_ip_rules(dst_ip, self.ip_blacklist):
                 action = "拦截"
-                reason = f"IP Blacklist ({src_ip if self._check_ip_rules(src_ip, self.ip_blacklist) else dst_ip})"
+                blocked_ip_for_reason = src_ip if self._check_ip_rules(src_ip, self.ip_blacklist) else dst_ip
+                reason = f"IP Blacklist ({blocked_ip_for_reason})"
                 packet_details = {**packet_details_base, 'action': action, 'reason': reason}
-                logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
+                # logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
+                logger.info(f"拦截动作: IP黑名单, 命中IP: {blocked_ip_for_reason}, 源IP: {src_ip}, 目标IP: {dst_ip}, 源端口: {packet_details_base.get('src_port', 'N/A')}, 目标端口: {packet_details_base.get('dst_port', 'N/A')}, 协议: {packet_details_base.get('protocol', 'N/A')}")
                 return False
 
             # 3. Port Filtering
@@ -150,7 +169,30 @@ class PacketAnalyzer:
                 # logger.debug("Passing packet with missing port(s).")
                 return True # Cannot filter without ports
 
-            # Whitelist check (higher priority)
+            # --- MODIFICATION START: Port Whitelist Exclusivity ---
+            has_port_whitelist = bool(self.port_whitelist)
+            if has_port_whitelist:
+                # Check if either source or destination port is in the whitelist
+                is_src_port_whitelisted = self._check_port_rules_single(src_port, self.port_whitelist)
+                is_dst_port_whitelisted = self._check_port_rules_single(dst_port, self.port_whitelist)
+
+                if is_src_port_whitelisted or is_dst_port_whitelisted:
+                    # Port is whitelisted, proceed to other rules (like blacklist or content filter)
+                    # logger.debug(f"Port {src_port if is_src_port_whitelisted else dst_port} is whitelisted. Continuing checks.")
+                    pass # Explicitly pass to continue evaluation
+                else:
+                    # Port is NOT in the whitelist, and a whitelist is active, so block.
+                    action = "拦截"
+                    reason = f"Port Not In Whitelist (Src: {src_port}, Dst: {dst_port})"
+                    packet_details = {**packet_details_base, 'action': action, 'reason': reason}
+                    logger.info(f"拦截动作: 端口未在白名单, 源端口: {src_port}, 目标端口: {dst_port}, 源IP: {src_ip}, 目标IP: {dst_ip}, 协议: {packet_details_base.get('protocol', 'N/A')}")
+                    return False
+            # --- MODIFICATION END ---
+
+            # Whitelist check (original logic - this will now only be effectively hit if no whitelist is active or if port was on whitelist)
+            # If a port whitelist is active and the packet's ports were NOT on it, we'd have returned False above.
+            # If a port whitelist is active and packet's ports WERE on it, this check is redundant but harmless.
+            # If no port whitelist is active, this check behaves as before.
             if self._check_port_rules(src_port, self.port_whitelist) or self._check_port_rules(dst_port, self.port_whitelist):
                 action = "放行"
                 reason = "Port Whitelist"
@@ -162,9 +204,11 @@ class PacketAnalyzer:
             # Blacklist check
             if self._check_port_rules(src_port, self.port_blacklist) or self._check_port_rules(dst_port, self.port_blacklist):
                 action = "拦截"
-                reason = f"Port Blacklist ({src_port if self._check_port_rules(src_port, self.port_blacklist) else dst_port})"
+                blocked_port_for_reason = src_port if self._check_port_rules(src_port, self.port_blacklist) else dst_port
+                reason = f"Port Blacklist ({blocked_port_for_reason})"
                 packet_details = {**packet_details_base, 'action': action, 'reason': reason}
-                logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
+                # logger.debug(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
+                logger.info(f"拦截动作: 端口黑名单, 命中端口: {blocked_port_for_reason}, 源IP: {src_ip}, 目标IP: {dst_ip}, 源端口: {src_port}, 目标端口: {dst_port}, 协议: {packet_details_base.get('protocol', 'N/A')}")
                 return False
 
             # 4. Content Filtering (using compiled regex on bytes)
@@ -175,10 +219,12 @@ class PacketAnalyzer:
                         try:
                             if pattern.search(payload):
                                 action = "拦截"
-                                reason = f"Content Filter ({pattern.pattern.decode('utf-8', 'ignore')})"
+                                pattern_str = pattern.pattern.decode('utf-8', 'ignore')
+                                reason = f"Content Filter ({pattern_str})"
                                 packet_details = {**packet_details_base, 'action': action, 'reason': reason}
                                 # Log content filter blocks at INFO level as they might be significant
-                                logger.info(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
+                                # logger.info(f"Packet {action}: {reason}", extra={'log_type': 'packet', 'packet_info': packet_details})
+                                logger.info(f"拦截动作: 内容过滤, 规则: {pattern_str}, 源IP: {src_ip}, 目标IP: {dst_ip}, 源端口: {packet_details_base.get('src_port', 'N/A')}, 目标端口: {packet_details_base.get('dst_port', 'N/A')}, 协议: {packet_details_base.get('protocol', 'N/A')}")
                                 return False
                         except Exception as search_err:
                              logger.error(f"Error during content filter search with pattern '{pattern.pattern.decode('utf-8', 'ignore')}': {search_err}")
@@ -216,11 +262,28 @@ class PacketAnalyzer:
              return False # Cannot check if IP is invalid
         return False
 
-    def _check_port_rules(self, port_to_check: int, rule_set: Set[str]) -> bool:
-        """Checks if a port matches any rule in the given set (single ports or ranges)."""
-        if not isinstance(port_to_check, int):
+    # Added helper for single port check against a rule set for clarity in whitelist logic
+    def _check_port_rules_single(self, port_to_check: int, rule_set: Set[str]) -> bool:
+        """Checks if a single port matches any rule in the given set."""
+        if port_to_check is None: # Should be caught earlier, but defensive
             return False
+        for rule_entry in rule_set:
+            parsed_rule = parse_port_rule(rule_entry)
+            if isinstance(parsed_rule, int):
+                if port_to_check == parsed_rule:
+                    return True
+            elif isinstance(parsed_rule, tuple):
+                if parsed_rule[0] <= port_to_check <= parsed_rule[1]:
+                    return True
+        return False
 
+    def _check_port_rules(self, port_to_check: int, rule_set: Set[str]) -> bool:
+        """Checks if a port matches any rule in the given set (individual ports or ranges)."""
+        # This existing function can be kept as is, or refactored if _check_port_rules_single is preferred everywhere
+        # For now, the new whitelist logic uses _check_port_rules_single.
+        # The original blacklist and whitelist (for pass) logic still uses this.
+        if port_to_check is None:
+            return False
         for rule_str in rule_set:
             parsed_rule = parse_port_rule(rule_str) # Use utility function
             if isinstance(parsed_rule, int):
