@@ -293,22 +293,21 @@ class Firewall(QObject):
 
     def _update_analyzer_rules(self):
         """Helper to push current rules from RuleManager to Analyzer"""
-        if self.analyzer:
-            try:
-                current_rules_from_manager = self.rule_manager.get_rules()
-                # Log summary of rules being pushed to analyzer
-                rules_summary_to_push = {
-                    'ip_blacklist_size': len(current_rules_from_manager.get('ip_blacklist', set())),
-                    'ip_whitelist_size': len(current_rules_from_manager.get('ip_whitelist', set())),
-                    'port_blacklist_size': len(current_rules_from_manager.get('port_blacklist', set())),
-                    'port_whitelist_size': len(current_rules_from_manager.get('port_whitelist', set())),
-                    'content_filters_count': len(current_rules_from_manager.get('content_filters', [])),
-                    'protocol_filter': current_rules_from_manager.get('protocol_filter', {})
-                }
-                logger.debug(f"Firewall: Pushing rules to Analyzer: {rules_summary_to_push}")
-                self.analyzer.set_rules(current_rules_from_manager)
-            except Exception as e:
-                 logger.error(f"Failed to update analyzer rules: {e}")
+        new_rules = self.rule_manager.get_rules()
+
+        # NEW DETAILED LOG before setting rules to analyzer:
+        logger.info(f"FirewallCore._update_analyzer_rules: Attempting to apply rules to PacketAnalyzer. "
+                    f"Rules from RuleManager.get_rules(): "
+                    f"IP Blacklist: {len(new_rules.get('ip_blacklist', set()))}, "
+                    f"IP Whitelist: {len(new_rules.get('ip_whitelist', set()))}, "
+                    f"Port Blacklist: {len(new_rules.get('port_blacklist', set()))}, "
+                    f"Port Whitelist: {len(new_rules.get('port_whitelist', set()))}, "
+                    f"Content Filters: {len(new_rules.get('content_filters', []))}, "
+                    f"Protocol Filter: {new_rules.get('protocol_filter', {})}")
+
+        self.analyzer.set_rules(new_rules)
+        # Apply settings only if they are relevant upon rule update, or handle separately
+        # self.analyzer.set_settings(self.performance_settings)
 
     def add_ip_to_blacklist(self, ip: str) -> bool:
         logger.debug(f"Firewall: Adding IP {ip} to blacklist...")

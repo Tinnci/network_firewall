@@ -48,14 +48,21 @@ class RuleManager:
         default_data = rule_storage.load_default_rules_data()
         
         if raw_data is None:
-            logger.warning("无法从文件加载规则，将使用默认规则。")
+            logger.warning("无法从文件加载规则，将使用默认规则 (当前内存中)。磁盘上的文件 (如果存在) 将不会被默认规则覆盖，除非有明确的保存操作。")
             self.rules = rule_validator.validate_rules(default_data, default_data) 
-            self._save_rules_to_storage() 
         else:
             self.rules = rule_validator.validate_rules(raw_data, default_data)
         
         # Log summary of loaded rules (be careful with large rule sets)
-        logger.debug(f"RuleManager: Rules loaded. IP Blacklist size: {len(self.rules.get('ip_blacklist', []))}, Content Filters count: {len(self.rules.get('content_filters', []))}")
+        # logger.debug(f"RuleManager: Rules loaded. IP Blacklist size: {len(self.rules.get('ip_blacklist', []))}, Content Filters count: {len(self.rules.get('content_filters', []))}")
+        # NEW DETAILED LOG for self.rules in RuleManager:
+        logger.info(f"RuleManager._load_and_validate_rules: Current self.rules summary: "
+                    f"IP Blacklist: {len(self.rules.get('ip_blacklist', set()))}, "
+                    f"IP Whitelist: {len(self.rules.get('ip_whitelist', set()))}, "
+                    f"Port Blacklist: {len(self.rules.get('port_blacklist', set()))}, "
+                    f"Port Whitelist: {len(self.rules.get('port_whitelist', set()))}, "
+                    f"Content Filters: {len(self.rules.get('content_filters', []))}, "
+                    f"Protocol Filter: {self.rules.get('protocol_filter', {})}")
 
         # Update mtime after loading/saving
         self.last_rules_file_mtime = self._get_rules_file_mtime()

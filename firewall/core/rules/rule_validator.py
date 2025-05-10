@@ -25,10 +25,20 @@ def validate_rules(rules_data: Dict[str, Any], default_rules_data: Dict[str, Any
 
     # Validate IP lists
     for key in ['ip_blacklist', 'ip_whitelist']:
-        raw_list = rules_data.get(key, default_rules_data.get(key, []))
+        raw_list_candidate = rules_data.get(key) # Get from file data first
+        default_list_for_key = default_rules_data.get(key, [])
+
+        if raw_list_candidate is None: # Key was not in file
+            logger.debug(f"Validator: Key '{key}' not found in rules_data. Using default: {default_list_for_key}")
+            raw_list = default_list_for_key
+        else:
+            raw_list = raw_list_candidate
+        
+        logger.info(f"Validator: For IP key '{key}', raw_list from rules_data (or default if key missing) is: {raw_list}, Type: {type(raw_list)}")
+
         if not isinstance(raw_list, list):
-             logger.warning(f"规则 '{key}' 格式无效 (不是列表)，使用默认值。")
-             raw_list = default_rules_data.get(key, [])
+             logger.warning(f"规则 '{key}' 格式无效 (不是列表，实际类型: {type(raw_list)})，使用默认值。 Raw data was: {raw_list}")
+             raw_list = default_list_for_key # Revert to default (empty list from default_rules_data)
              
         valid_ips = {ip for ip in raw_list if isinstance(ip, str) and is_valid_ip_or_cidr(ip)}
         invalid_count = len(raw_list) - len(valid_ips)
@@ -38,10 +48,20 @@ def validate_rules(rules_data: Dict[str, Any], default_rules_data: Dict[str, Any
 
     # Validate Port lists
     for key in ['port_blacklist', 'port_whitelist']:
-        raw_list = rules_data.get(key, default_rules_data.get(key, []))
+        raw_list_candidate = rules_data.get(key) # Get from file data first
+        default_list_for_key = default_rules_data.get(key, [])
+
+        if raw_list_candidate is None: # Key was not in file
+            logger.debug(f"Validator: Key '{key}' not found in rules_data. Using default: {default_list_for_key}")
+            raw_list = default_list_for_key
+        else:
+            raw_list = raw_list_candidate
+
+        logger.info(f"Validator: For Port key '{key}', raw_list from rules_data (or default if key missing) is: {raw_list}, Type: {type(raw_list)}")
+
         if not isinstance(raw_list, list):
-             logger.warning(f"规则 '{key}' 格式无效 (不是列表)，使用默认值。")
-             raw_list = default_rules_data.get(key, [])
+             logger.warning(f"规则 '{key}' 格式无效 (不是列表，实际类型: {type(raw_list)})，使用默认值。 Raw data was: {raw_list}")
+             raw_list = default_list_for_key # Revert to default (empty list from default_rules_data)
              
         # Convert items to string for validation, handle potential non-string items gracefully
         items_as_str = []
@@ -58,10 +78,20 @@ def validate_rules(rules_data: Dict[str, Any], default_rules_data: Dict[str, Any
         validated_rules[key] = valid_ports # Store as set of strings
 
     # Validate Content Filters
-    raw_content_filters = rules_data.get('content_filters', default_rules_data.get('content_filters', []))
+    raw_content_filters_candidate = rules_data.get('content_filters')
+    default_content_filters = default_rules_data.get('content_filters', [])
+
+    if raw_content_filters_candidate is None: # Key was not in file
+        logger.debug(f"Validator: Key 'content_filters' not found in rules_data. Using default: {default_content_filters}")
+        raw_content_filters = default_content_filters
+    else:
+        raw_content_filters = raw_content_filters_candidate
+
+    logger.info(f"Validator: For Content Filters key 'content_filters', raw_list from rules_data (or default if key missing) is: {raw_content_filters}, Type: {type(raw_content_filters)}")
+    
     if not isinstance(raw_content_filters, list):
-        logger.warning("规则 'content_filters' 格式无效 (不是列表)，使用默认值。")
-        raw_content_filters = default_rules_data.get('content_filters', [])
+        logger.warning(f"规则 'content_filters' 格式无效 (不是列表，实际类型: {type(raw_content_filters)})，使用默认值。 Raw data was: {raw_content_filters}")
+        raw_content_filters = default_content_filters # Revert to default (empty list from default_rules_data)
         
     valid_filters = []
     invalid_count = 0
