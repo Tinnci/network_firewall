@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QTabWidget, QMessageBox, QCheckBox, QGroupBox, QFileDialog
 )
 # Import QObject and pyqtSignal for custom signals
-from PyQt6.QtCore import QTimer, pyqtSlot, QObject, pyqtSignal, Qt
+from PyQt6.QtCore import QTimer, pyqtSlot, pyqtSignal
 
 from ..core.firewall import Firewall
 # Import new tab classes

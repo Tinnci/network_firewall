@@ -5,12 +5,213 @@ import os
 import logging
 import re
 import time
+import yaml # Added import for yaml
 from typing import Dict, Any, Tuple, Union, Optional
 
-# Import from local subpackage and utils
-from .rules import rule_storage, rule_validator
+# Import from utils
 from ..utils.network_utils import is_valid_ip_or_cidr, is_valid_port_or_range
 
+# Logger for the helper functions (will resolve to firewall.core.rule_manager)
+_helper_logger = logging.getLogger(__name__)
+
+# --- Functions moved from rule_storage.py ---
+
+def _load_default_rules_data() -> Dict[str, Any]:
+    """
+    返回表示默认规则的 Python 字典 (使用列表)。
+    """
+    return {
+        'ip_blacklist': [],
+        'ip_whitelist': [],
+        'port_blacklist': [],
+        'port_whitelist': [],
+        'content_filters': [],
+        'protocol_filter': {"tcp": True, "udp": True}
+    }
+
+def _load_rules_from_file(filepath: str) -> Optional[Dict[str, Any]]:
+    """
+    从指定的 YAML 文件加载原始规则数据。
+
+    Args:
+        filepath: 规则文件的路径。
+
+    Returns:
+        包含原始规则数据的字典，如果文件不存在或解析失败则返回 None。
+    """
+    if not os.path.isfile(filepath):
+        _helper_logger.warning(f"规则文件不存在: {filepath}")
+        return None
+        
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            rules_data = yaml.safe_load(f)
+            if not isinstance(rules_data, dict):
+                 _helper_logger.error(f"规则文件格式无效 (不是字典): {filepath}")
+                 return None
+            _helper_logger.info(f"从文件加载原始规则数据: {filepath}")
+            return rules_data
+    except yaml.YAMLError as e:
+        _helper_logger.error(f"解析规则文件时出错 (YAML 错误): {filepath} - {e}")
+        return None
+    except Exception as e:
+        _helper_logger.error(f"加载规则文件时发生未知错误: {filepath} - {e}")
+        return None
+
+def _save_rules_to_file(filepath: str, rules: Dict[str, Any]) -> bool:
+    """
+    将规则字典保存到指定的 YAML 文件。
+    注意：输入字典中的集合应在此函数调用前转换为列表。
+
+    Args:
+        filepath: 要保存到的文件路径。
+        rules: 包含规则的字典 (集合应已转换为列表)。
+
+    Returns:
+        bool: 是否保存成功。
+    """
+    try:
+        # 确保目录存在
+        os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+        
+        # 准备要写入的数据 (确保集合已转换为排序列表)
+        rules_data_to_save = {}
+        for key, value in rules.items():
+            if isinstance(value, set):
+                rules_data_to_save[key] = sorted(list(value))
+            else:
+                rules_data_to_save[key] = value # Assume other types (list, dict) are serializable
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            yaml.dump(rules_data_to_save, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+            
+        _helper_logger.info(f"规则已成功保存到: {filepath}")
+        return True
+    except Exception as e:
+        _helper_logger.error(f"保存规则文件时出错: {filepath} - {e}")
+        return False
+
+# --- Functions moved from rule_validator.py ---
+
+def _validate_rules(rules_data: Dict[str, Any], default_rules_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    验证从存储加载的原始规则数据，并将其转换为内部使用的、经过验证的数据结构。
+
+    Args:
+        rules_data: 从文件加载的原始规则字典。
+        default_rules_data: 用于获取默认值的默认规则字典。
+
+    Returns:
+        包含经过验证和转换的数据（例如，集合）的新字典。
+    """
+    validated_rules = {} # Start with an empty dict
+
+    # Validate IP lists
+    for key in ['ip_blacklist', 'ip_whitelist']:
+        raw_list_candidate = rules_data.get(key) # Get from file data first
+        default_list_for_key = default_rules_data.get(key, [])
+
+        if raw_list_candidate is None: # Key was not in file
+            _helper_logger.debug(f"Validator: Key '{key}' not found in rules_data. Using default: {default_list_for_key}")
+            raw_list = default_list_for_key
+        else:
+            raw_list = raw_list_candidate
+        
+        _helper_logger.info(f"Validator: For IP key '{key}', raw_list from rules_data (or default if key missing) is: {raw_list}, Type: {type(raw_list)}")
+
+        if not isinstance(raw_list, list):
+             _helper_logger.warning(f"规则 '{key}' 格式无效 (不是列表，实际类型: {type(raw_list)})，使用默认值。 Raw data was: {raw_list}")
+             raw_list = default_list_for_key # Revert to default (empty list from default_rules_data)
+             
+        valid_ips = {ip for ip in raw_list if isinstance(ip, str) and is_valid_ip_or_cidr(ip)}
+        invalid_count = len(raw_list) - len(valid_ips)
+        if invalid_count > 0:
+            _helper_logger.warning(f"加载规则时发现 {invalid_count} 个无效的IP/CIDR条目在 '{key}' 中，已忽略。")
+        validated_rules[key] = valid_ips # Store as set
+
+    # Validate Port lists
+    for key in ['port_blacklist', 'port_whitelist']:
+        raw_list_candidate = rules_data.get(key) # Get from file data first
+        default_list_for_key = default_rules_data.get(key, [])
+
+        if raw_list_candidate is None: # Key was not in file
+            _helper_logger.debug(f"Validator: Key '{key}' not found in rules_data. Using default: {default_list_for_key}")
+            raw_list = default_list_for_key
+        else:
+            raw_list = raw_list_candidate
+
+        _helper_logger.info(f"Validator: For Port key '{key}', raw_list from rules_data (or default if key missing) is: {raw_list}, Type: {type(raw_list)}")
+
+        if not isinstance(raw_list, list):
+             _helper_logger.warning(f"规则 '{key}' 格式无效 (不是列表，实际类型: {type(raw_list)})，使用默认值。 Raw data was: {raw_list}")
+             raw_list = default_list_for_key # Revert to default (empty list from default_rules_data)
+             
+        # Convert items to string for validation, handle potential non-string items gracefully
+        items_as_str = []
+        for item in raw_list:
+             if isinstance(item, (str, int)):
+                 items_as_str.append(str(item))
+             else:
+                 _helper_logger.warning(f"在 '{key}' 中发现非字符串/整数类型的无效端口条目: {item} (类型: {type(item)})，已忽略。")
+
+        valid_ports = {item_str for item_str in items_as_str if is_valid_port_or_range(item_str)}
+        invalid_count = len(items_as_str) - len(valid_ports)
+        if invalid_count > 0:
+            _helper_logger.warning(f"加载规则时发现 {invalid_count} 个无效的端口/范围条目在 '{key}' 中，已忽略。")
+        validated_rules[key] = valid_ports # Store as set of strings
+
+    # Validate Content Filters
+    raw_content_filters_candidate = rules_data.get('content_filters')
+    default_content_filters = default_rules_data.get('content_filters', [])
+
+    if raw_content_filters_candidate is None: # Key was not in file
+        _helper_logger.debug(f"Validator: Key 'content_filters' not found in rules_data. Using default: {default_content_filters}")
+        raw_content_filters = default_content_filters
+    else:
+        raw_content_filters = raw_content_filters_candidate
+
+    _helper_logger.info(f"Validator: For Content Filters key 'content_filters', raw_list from rules_data (or default if key missing) is: {raw_content_filters}, Type: {type(raw_content_filters)}")
+    
+    if not isinstance(raw_content_filters, list):
+        _helper_logger.warning(f"规则 'content_filters' 格式无效 (不是列表，实际类型: {type(raw_content_filters)})，使用默认值。 Raw data was: {raw_content_filters}")
+        raw_content_filters = default_content_filters # Revert to default (empty list from default_rules_data)
+        
+    valid_filters = []
+    invalid_count = 0
+    for f in raw_content_filters:
+        if isinstance(f, str):
+            try:
+                re.compile(f)
+                valid_filters.append(f)
+            except re.error as e:
+                 _helper_logger.warning(f"加载规则时发现无效的内容过滤正则表达式 '{f}': {e}，已忽略。")
+                 invalid_count += 1
+        else:
+            _helper_logger.warning(f"加载规则时发现无效的内容过滤器条目（非字符串）: {f}，已忽略。")
+            invalid_count += 1
+    validated_rules['content_filters'] = valid_filters # Store as list
+
+    # Validate Protocol Filter
+    raw_protocol_filter = rules_data.get('protocol_filter', default_rules_data.get('protocol_filter', {}))
+    if not isinstance(raw_protocol_filter, dict):
+         _helper_logger.warning("规则 'protocol_filter' 格式无效 (不是字典)，使用默认值。")
+         raw_protocol_filter = default_rules_data.get('protocol_filter', {})
+         
+    valid_proto_filter = default_rules_data.get('protocol_filter', {"tcp": True, "udp": True}).copy() # Start with default
+    for proto, enabled in raw_protocol_filter.items():
+        if isinstance(proto, str) and proto.lower() in ['tcp', 'udp']:
+            if isinstance(enabled, bool):
+                valid_proto_filter[proto.lower()] = enabled
+            else:
+                 _helper_logger.warning(f"加载规则时发现无效的协议过滤值 (非布尔值) for '{proto}': {enabled}，已忽略。")
+        else:
+            _helper_logger.warning(f"加载规则时发现无效的协议过滤键: {proto}，已忽略。")
+    validated_rules['protocol_filter'] = valid_proto_filter
+
+    _helper_logger.debug("规则数据验证和转换完成。")
+    return validated_rules
+
+# Logger for the RuleManager class
 logger = logging.getLogger('RuleManager')
 
 class RuleManager:
@@ -44,18 +245,15 @@ class RuleManager:
     def _load_and_validate_rules(self):
         """加载并验证规则，如果失败则使用默认规则。"""
         logger.debug(f"RuleManager: Attempting to load rules from '{self.rules_file}'")
-        raw_data = rule_storage.load_rules_from_file(self.rules_file)
-        default_data = rule_storage.load_default_rules_data()
+        raw_data = _load_rules_from_file(self.rules_file) # Use internal function
+        default_data = _load_default_rules_data() # Use internal function
         
         if raw_data is None:
             logger.warning("无法从文件加载规则，将使用默认规则 (当前内存中)。磁盘上的文件 (如果存在) 将不会被默认规则覆盖，除非有明确的保存操作。")
-            self.rules = rule_validator.validate_rules(default_data, default_data) 
+            self.rules = _validate_rules(default_data, default_data) # Use internal function
         else:
-            self.rules = rule_validator.validate_rules(raw_data, default_data)
+            self.rules = _validate_rules(raw_data, default_data) # Use internal function
         
-        # Log summary of loaded rules (be careful with large rule sets)
-        # logger.debug(f"RuleManager: Rules loaded. IP Blacklist size: {len(self.rules.get('ip_blacklist', []))}, Content Filters count: {len(self.rules.get('content_filters', []))}")
-        # NEW DETAILED LOG for self.rules in RuleManager:
         logger.info(f"RuleManager._load_and_validate_rules: Current self.rules summary: "
                     f"IP Blacklist: {len(self.rules.get('ip_blacklist', set()))}, "
                     f"IP Whitelist: {len(self.rules.get('ip_whitelist', set()))}, "
@@ -64,18 +262,15 @@ class RuleManager:
                     f"Content Filters: {len(self.rules.get('content_filters', []))}, "
                     f"Protocol Filter: {self.rules.get('protocol_filter', {})}")
 
-        # Update mtime after loading/saving
         self.last_rules_file_mtime = self._get_rules_file_mtime()
         if self.last_rules_file_mtime is None and os.path.exists(self.rules_file):
-            # If file was created by save_rules_to_storage, mtime might be None initially if get_mtime failed before creation.
-            # Try to get it again.
             self.last_rules_file_mtime = self._get_rules_file_mtime()
 
     def _save_rules_to_storage(self) -> bool:
         """将当前内存中的规则保存到存储。"""
-        success = rule_storage.save_rules_to_file(self.rules_file, self.rules)
+        success = _save_rules_to_file(self.rules_file, self.rules) # Use internal function
         if success:
-            self.last_rules_file_mtime = self._get_rules_file_mtime() # Update mtime after successful save
+            self.last_rules_file_mtime = self._get_rules_file_mtime()
         return success
 
     def check_and_reload_rules(self) -> bool:
@@ -87,12 +282,10 @@ class RuleManager:
         current_mtime = self._get_rules_file_mtime()
 
         if current_mtime is None:
-            # Rule file might have been deleted.
-            if self.last_rules_file_mtime is not None: # It existed before
+            if self.last_rules_file_mtime is not None:
                 logger.warning(f"规则文件 '{self.rules_file}' 已被删除。将尝试加载默认规则。")
-                self._load_and_validate_rules() # This will load defaults and save, updating mtime
-                return True # Rules were reloaded (to defaults)
-            # If it never existed or was already gone, nothing to do.
+                self._load_and_validate_rules()
+                return True
             return False
 
         if self.last_rules_file_mtime is None or current_mtime != self.last_rules_file_mtime:
@@ -107,7 +300,6 @@ class RuleManager:
         return self.rules
         
     # --- Rule Manipulation Methods ---
-    # These methods modify the in-memory self.rules and then save.
 
     def add_ip_to_blacklist(self, ip: str) -> bool:
         if not is_valid_ip_or_cidr(ip): 
@@ -119,7 +311,6 @@ class RuleManager:
                 logger.info(f"IP/CIDR '{ip}' 已添加到黑名单并保存。")
                 return True
             else:
-                # Rollback memory change if save failed? Optional.
                 self.rules['ip_blacklist'].discard(ip) 
                 return False
         else:
@@ -128,17 +319,15 @@ class RuleManager:
             
     def remove_ip_from_blacklist(self, ip: str) -> bool:
         if ip in self.rules['ip_blacklist']:
-            self.rules['ip_blacklist'].discard(ip) # Use discard to avoid error if not present
+            self.rules['ip_blacklist'].discard(ip)
             if self._save_rules_to_storage():
                 logger.info(f"IP/CIDR '{ip}' 已从黑名单移除并保存。")
                 return True
             else:
-                # Rollback?
-                # self.rules['ip_blacklist'].add(ip) 
                 return False
         else:
              logger.info(f"IP/CIDR '{ip}' 不在黑名单中。")
-             return True # Consider removal of non-existent item a success
+             return True
 
     def add_ip_to_whitelist(self, ip: str) -> bool:
         if not is_valid_ip_or_cidr(ip): 
@@ -163,7 +352,6 @@ class RuleManager:
                 logger.info(f"IP/CIDR '{ip}' 已从白名单移除并保存。")
                 return True
             else:
-                # self.rules['ip_whitelist'].add(ip)
                 return False
         else:
             logger.info(f"IP/CIDR '{ip}' 不在白名单中。")
@@ -194,7 +382,6 @@ class RuleManager:
                 logger.info(f"端口/范围 '{port_str}' 已从黑名单移除并保存。")
                 return True
             else:
-                # self.rules['port_blacklist'].add(port_str)
                 return False
         else:
             logger.info(f"端口/范围 '{port_str}' 不在黑名单中。")
@@ -225,7 +412,6 @@ class RuleManager:
                 logger.info(f"端口/范围 '{port_str}' 已从白名单移除并保存。")
                 return True
             else:
-                # self.rules['port_whitelist'].add(port_str)
                 return False
         else:
             logger.info(f"端口/范围 '{port_str}' 不在白名单中。")
@@ -236,7 +422,7 @@ class RuleManager:
              logger.warning("尝试添加空的或非字符串内容过滤器。")
              return False
         try:
-            re.compile(pattern) # Validate regex before adding
+            re.compile(pattern)
         except re.error as regex_err:
             logger.error(f"添加内容过滤规则失败: 无效的正则表达式 '{pattern}' - {regex_err}")
             return False
@@ -247,7 +433,7 @@ class RuleManager:
                 logger.info(f"内容过滤规则 '{pattern}' 已添加并保存。")
                 return True
             else:
-                self.rules['content_filters'].remove(pattern) # Rollback
+                self.rules['content_filters'].remove(pattern)
                 return False
         else:
             logger.info(f"内容过滤规则 '{pattern}' 已存在。")
@@ -260,7 +446,7 @@ class RuleManager:
                 logger.info(f"内容过滤规则 '{pattern}' 已移除并保存。")
                 return True
             else:
-                self.rules['content_filters'].append(pattern) # Rollback
+                self.rules['content_filters'].append(pattern)
                 return False
         else:
             logger.info(f"内容过滤规则 '{pattern}' 不存在。")
@@ -281,7 +467,6 @@ class RuleManager:
                 logger.info(f"{proto_lower.upper()} 协议过滤已设置为 {enabled} 并保存。")
                 return True
             else:
-                # Rollback
                 self.rules['protocol_filter'][proto_lower] = not enabled 
                 return False
         else:
@@ -289,7 +474,6 @@ class RuleManager:
             return True
 
     # --- Import/Export Methods ---
-    # These still make sense here as they operate on the rule set as a whole
 
     def export_ip_list(self, list_type: str, filename: str) -> bool:
         """导出IP列表到文件 (一行一个IP/CIDR)"""
@@ -303,10 +487,8 @@ class RuleManager:
              return False
 
         try:
-            # Ensure directory exists
             os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
             with open(filename, 'w', encoding='utf-8') as f:
-                # Sort for consistency
                 sorted_list = sorted(list(self.rules[key]))
                 for ip in sorted_list:
                     f.write(f"{ip}\n")
@@ -339,25 +521,23 @@ class RuleManager:
             with open(filename, 'r', encoding='utf-8') as f:
                 for line in f:
                     ip = line.strip()
-                    if not ip or ip.startswith('#'): # Skip empty lines and comments
+                    if not ip or ip.startswith('#'):
                         continue
                         
                     if is_valid_ip_or_cidr(ip): 
                         if ip not in self.rules[key]:
                             added_ips.add(ip)
-                            # Don't increment count until save succeeds
                     else:
                         invalid_count += 1
                         logger.warning(f"导入时跳过无效IP/CIDR: {ip}")
             
             if added_ips:
-                original_set = self.rules[key].copy() # Keep original for potential rollback
+                original_set = self.rules[key].copy()
                 self.rules[key].update(added_ips)
                 if self._save_rules_to_storage():
                     imported_count = len(added_ips)
                     logger.info(f"成功从 {filename} 导入 {imported_count} 个IP/CIDR到 {list_type}。")
                 else:
-                    # Rollback memory change if save failed
                     self.rules[key] = original_set 
                     logger.error("保存导入的规则失败，内存更改已回滚。")
                     return False, 0, invalid_count
@@ -372,7 +552,3 @@ class RuleManager:
         except Exception as e:
             logger.error(f"从 {filename} 导入IP {list_type} 时出错: {e}")
             return False, 0, invalid_count
-
-    # Removed _load_rules, save_rules (using _save_rules_to_storage), 
-    # _load_default_rules, _validate_loaded_rules
-    # Removed validation methods (_is_valid_ip_or_cidr, _is_valid_port_or_range)
