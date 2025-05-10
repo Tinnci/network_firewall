@@ -7,8 +7,9 @@ from .screenshots import screenshot_util
 
 # 常用的测试目标和端口
 # 对于端口黑名单，我们会尝试连接到一个通常可访问的外部服务端口
-TEST_EXTERNAL_HOST = "www.example.com" # 用于测试 HTTP/HTTPS
+# TEST_EXTERNAL_HOST = "www.example.com" # 用于测试 HTTP/HTTPS
 # 或者使用IP地址，如 "93.184.216.34" for example.com, "8.8.8.8" for Google DNS
+TEST_EXTERNAL_HOST_IP = "93.184.216.34" # 使用 example.com 的一个IP地址，避免DNS问题
 TEST_HTTP_PORT = 80
 TEST_HTTPS_PORT = 443
 
@@ -35,10 +36,10 @@ def test_port_blacklist_http(manage_rules):
 
     # 2. 操作: 尝试通过HTTP访问网站 (连接到80端口)
     # network_helper.can_access_url 会尝试GET请求，如果端口不通，会返回False
-    # http_allowed = network_helper.can_access_url(f"http://{TEST_EXTERNAL_HOST}")
+    # http_allowed = network_helper.can_access_url(f"http://{TEST_EXTERNAL_HOST_IP}")
     # 或者直接尝试TCP连接
-    connection_blocked = not network_helper.send_tcp_packet(TEST_EXTERNAL_HOST, TEST_HTTP_PORT)
-    print(f"尝试连接到 {TEST_EXTERNAL_HOST}:{TEST_HTTP_PORT} (HTTP): {'成功拦截' if connection_blocked else '未拦截/可连接'}")
+    connection_blocked = not network_helper.send_tcp_packet(TEST_EXTERNAL_HOST_IP, TEST_HTTP_PORT)
+    print(f"尝试连接到 {TEST_EXTERNAL_HOST_IP}:{TEST_HTTP_PORT} (HTTP): {'成功拦截' if connection_blocked else '未拦截/可连接'}")
 
     time.sleep(1)
     # 日志模式示例: "拦截 TCP ... DstPort=80"
@@ -67,12 +68,12 @@ def test_port_whitelist_https_only(manage_rules):
 
     # 2. 操作
     # 尝试HTTPS (应该允许)
-    https_allowed = network_helper.send_tcp_packet(TEST_EXTERNAL_HOST, TEST_HTTPS_PORT)
-    print(f"尝试连接到 {TEST_EXTERNAL_HOST}:{TEST_HTTPS_PORT} (HTTPS): {'成功' if https_allowed else '失败'}")
+    https_allowed = network_helper.send_tcp_packet(TEST_EXTERNAL_HOST_IP, TEST_HTTPS_PORT)
+    print(f"尝试连接到 {TEST_EXTERNAL_HOST_IP}:{TEST_HTTPS_PORT} (HTTPS): {'成功' if https_allowed else '失败'}")
 
     # 尝试HTTP (应该禁止)
-    http_blocked = not network_helper.send_tcp_packet(TEST_EXTERNAL_HOST, TEST_HTTP_PORT)
-    print(f"尝试连接到 {TEST_EXTERNAL_HOST}:{TEST_HTTP_PORT} (HTTP): {'成功拦截' if http_blocked else '未拦截/可连接'}")
+    http_blocked = not network_helper.send_tcp_packet(TEST_EXTERNAL_HOST_IP, TEST_HTTP_PORT)
+    print(f"尝试连接到 {TEST_EXTERNAL_HOST_IP}:{TEST_HTTP_PORT} (HTTP): {'成功拦截' if http_blocked else '未拦截/可连接'}")
 
     time.sleep(1)
     # http_block_logs = log_parser.find_log_entries(f"拦截.*DstPort={TEST_HTTP_PORT}", max_lines_to_check=50)

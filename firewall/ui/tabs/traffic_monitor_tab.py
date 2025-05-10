@@ -24,6 +24,7 @@ class TrafficMonitorTab(QWidget):
     # 信号定义
     clear_traffic_requested = pyqtSignal()
     pause_monitoring_toggled = pyqtSignal(bool)
+    traffic_table_refreshed_signal = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -295,26 +296,33 @@ class TrafficMonitorTab(QWidget):
         """根据过滤条件完全重建表格内容 (仅在过滤器更改时调用)"""
         self.traffic_table.setRowCount(0) # Clear table first
         
-        # Iterate through history and add only matching packets
-        rows_added = 0
-        # Iterate in reverse to get the latest packets first if history is large
-        for packet in reversed(self.packet_history): 
-            if rows_added >= self.max_rows:
-                break # Stop adding if we reached the display limit
-
-            protocol = packet.get("protocol", "").lower()
-            direction = packet.get("direction", "").lower()
-
-            # Check filters
-            if not self.protocol_filter.get(protocol, True):
-                continue
-            if not self.direction_filter.get(direction, True):
-                 continue
-
-            # Insert row at the top (since we iterate reversed)
-            self.traffic_table.insertRow(0) 
-            self._populate_row(0, packet)
-            rows_added += 1
+        # Filter and display
+        self.traffic_table.setRowCount(0) # Clear existing rows
+        
+        # Determine which packets to show based on filters
+        packets_to_display = []
+        for packet in reversed(self.packet_history): # Show newest first
+            if len(packets_to_display) >= self.max_rows: 
+                break # Limit displayed rows for performance
             
-        # No need to scroll here, as we rebuild the view
-        # logger.debug(f"Refreshed traffic table with {rows_added} rows.")
+            proto = packet.get("protocol", "").lower()
+            direction = packet.get("direction", "").lower()
+            
+            # Protocol filter
+            if not self.protocol_filter.get(proto, True):
+                continue
+            
+            # Direction filter
+            if (direction == "入站" and not self.direction_filter["inbound"]) or \
+               (direction == "出站" and not self.direction_filter["outbound"]):
+                continue
+                
+            packets_to_display.append(packet)
+
+        # Populate table with filtered packets
+        self.traffic_table.setRowCount(len(packets_to_display))
+        for i, packet_data in enumerate(packets_to_display):
+            self._populate_row(i, packet_data)
+            
+        self._update_stats_labels() # Update stats based on full history
+        self.traffic_table_refreshed_signal.emit() # Emit signal

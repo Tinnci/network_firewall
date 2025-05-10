@@ -49,6 +49,30 @@ def pytest_sessionstart(session):
     if sys.platform == "win32" and not is_admin():
         pytest.exit("错误：必须以管理员权限运行 Pytest 以进行防火墙测试。请以管理员身份重新启动您的终端/命令提示符，然后再次运行 pytest。", returncode=1)
     print("\nPytest 正在以管理员权限运行 (或非Windows环境)。")
+
+    if sys.platform == "win32":
+        print("\n--- 输出 ipconfig /all ---")
+        try:
+            result_ipconfig = subprocess.run(["ipconfig", "/all"], capture_output=True, text=True, check=False, encoding='gbk', errors='replace')
+            print(result_ipconfig.stdout)
+            if result_ipconfig.stderr:
+                print("--- ipconfig stderr ---")
+                print(result_ipconfig.stderr)
+        except Exception as e:
+            print(f"执行 ipconfig /all 失败: {e}")
+        print("--- 完成 ipconfig /all ---\n")
+
+        print("\n--- 输出 route print ---")
+        try:
+            result_route = subprocess.run(["route", "print"], capture_output=True, text=True, check=False, encoding='gbk', errors='replace')
+            print(result_route.stdout)
+            if result_route.stderr:
+                print("--- route print stderr ---")
+                print(result_route.stderr)
+        except Exception as e:
+            print(f"执行 route print 失败: {e}")
+        print("--- 完成 route print ---\n")
+
     # 清理日志文件，为防火墙启动的就绪检测做准备
     clear_log_file_for_startup()
 

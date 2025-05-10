@@ -19,6 +19,8 @@ class IpFilterTab(QWidget):
     import_list_requested = pyqtSignal(str) # list_type: 'blacklist' or 'whitelist'
     export_list_requested = pyqtSignal(str) # list_type: 'blacklist' or 'whitelist'
 
+    lists_updated_signal = pyqtSignal() # New signal
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._create_ui()
@@ -113,6 +115,7 @@ class IpFilterTab(QWidget):
         """更新黑名单和白名单列表显示"""
         self._update_list_widget(self.bl_ip_list, blacklist_items)
         self._update_list_widget(self.wl_ip_list, whitelist_items)
+        self.lists_updated_signal.emit() # Emit signal after updates
 
     def clear_blacklist_input(self):
         """清空黑名单输入框"""

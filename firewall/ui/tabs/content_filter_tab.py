@@ -14,6 +14,7 @@ class ContentFilterTab(QWidget):
     # Signals to request actions from the main window
     add_filter_requested = pyqtSignal(str)
     remove_filter_requested = pyqtSignal(str)
+    list_updated_signal = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,6 +64,7 @@ class ContentFilterTab(QWidget):
     def update_list(self, filter_items: List[str]):
         """更新内容过滤规则列表显示"""
         self._update_list_widget(self.content_filter_list, filter_items)
+        self.list_updated_signal.emit()
 
     def clear_input(self):
         """清空输入框"""

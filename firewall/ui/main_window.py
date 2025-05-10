@@ -31,6 +31,7 @@ class MainWindow(QMainWindow):
     # Define signals to safely update UI from other threads
     log_entry_received = pyqtSignal(dict)
     traffic_packet_received = pyqtSignal(dict)
+    rules_ui_updated_signal = pyqtSignal() # New signal for rule UI updates
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -379,6 +380,7 @@ class MainWindow(QMainWindow):
             self.ip_filter_tab.update_lists(rules.get('ip_blacklist', set()), rules.get('ip_whitelist', set()))
             self.port_filter_tab.update_lists(rules.get('port_blacklist', set()), rules.get('port_whitelist', set()))
             self.content_filter_tab.update_list(rules.get('content_filters', []))
+            self.rules_ui_updated_signal.emit() # Emit signal after all tab updates are called
         except Exception as e:
              logger.error(f"Error updating rule lists in UI: {e}", exc_info=True) 
 

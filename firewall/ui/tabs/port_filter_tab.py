@@ -16,6 +16,7 @@ class PortFilterTab(QWidget):
     remove_blacklist_requested = pyqtSignal(str)
     add_whitelist_requested = pyqtSignal(str)
     remove_whitelist_requested = pyqtSignal(str)
+    lists_updated_signal = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -89,6 +90,7 @@ class PortFilterTab(QWidget):
         """更新黑名单和白名单列表显示"""
         self._update_list_widget(self.bl_port_list, blacklist_items)
         self._update_list_widget(self.wl_port_list, whitelist_items)
+        self.lists_updated_signal.emit()
 
     def clear_blacklist_input(self):
         """清空黑名单输入框"""

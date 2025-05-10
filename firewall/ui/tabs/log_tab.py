@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget, 
     QTableWidgetItem, QHeaderView, QAbstractItemView
 )
-from PyQt6.QtCore import pyqtSlot
+from PyQt6.QtCore import pyqtSlot, pyqtSignal
 from PyQt6.QtGui import QColor
 
 # Import config
@@ -29,7 +29,7 @@ COL_SIZE = 7
 
 class LogTab(QWidget):
     """日志标签页的UI和更新逻辑"""
-    # No signals needed from this tab currently, clear is handled internally
+    log_entry_added_signal = pyqtSignal(dict) # New signal
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -135,6 +135,7 @@ class LogTab(QWidget):
 
             # Scroll to the bottom to show the latest entry
             self.log_table.scrollToBottom()
+            self.log_entry_added_signal.emit(log_entry) # Emit signal
 
         except Exception as e:
             # Avoid crashing the UI due to logging errors
