@@ -136,6 +136,9 @@ class PacketInterceptor:
                     break 
                     
                 if packet:
+                    # --- DEBUG LOG START ---
+                    logger.critical(f"Interceptor: Received packet: {getattr(packet, 'src_addr', 'N/A')}:{getattr(packet, 'src_port', 'N/A')} -> {getattr(packet, 'dst_addr', 'N/A')}:{getattr(packet, 'dst_port', 'N/A')}, IsLoopback: {getattr(packet, 'is_loopback', 'N/A')}, Direction: {packet.direction if hasattr(packet, 'direction') else 'N/A'}")
+                    # --- DEBUG LOG END ---
                     if self.packet_handler_callback:
                         try:
                             self.packet_handler_callback(packet)

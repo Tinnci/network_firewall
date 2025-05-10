@@ -5,6 +5,7 @@ import re # 需要导入re
 import socket # 需要导入socket
 from .helpers import rule_helper, network_helper, log_parser
 from .screenshots import screenshot_util
+import logging
 
 # 假设本机IP和未被防火墙其他规则限制的端口
 TEST_LOCAL_HOST = "127.0.0.1"
@@ -17,6 +18,9 @@ def test_content_filter_simple_match_block(manage_rules):
     log_parser.clear_log_file()
 
     keyword_to_block = "testkeyword_auto"
+    test_tag = "test_content_filter_simple_match_block"
+    marker = f"=== TEST_START: {test_tag} ==="
+    logging.getLogger("test_case").info(marker)
 
     # 1. 设置规则: 添加内容过滤规则
     current_rules = rule_helper.get_default_rules()
@@ -29,18 +33,14 @@ def test_content_filter_simple_match_block(manage_rules):
     time.sleep(6) # 等待规则加载
 
     # 2. 操作: 发送包含关键字的数据包
-    # 需要一个简单的TCP服务器来接收数据包，或者依赖防火墙日志判断是否拦截
-    # 为简化，我们直接发送并检查日志
-    # 注意：send_tcp_packet 只是尝试连接和发送，如果防火墙在发送前就拦截了连接，它可能返回False
-    # 关键是检查日志
     payload_with_keyword = f"some data before {keyword_to_block} and after".encode('utf-8')
     network_helper.send_tcp_packet(TEST_LOCAL_HOST, TEST_LOCAL_PORT, payload_with_keyword)
     # 如果防火墙是透明的，连接可能会成功，但数据包应该被拦截。
     # 如果防火墙在连接层面就基于内容（不太可能），则连接会失败。
 
     time.sleep(1) # 等待日志写入
-    # 调整日志匹配模式以适应您的实际日志输出
-    log_entries = log_parser.find_log_entries(f"拦截动作: 内容过滤, 规则: {re.escape(keyword_to_block)}", max_lines_to_check=50)
+    # 只查找marker之后的日志
+    log_entries = log_parser.find_log_entries_after_marker(f"拦截动作: 内容过滤, 规则: {re.escape(keyword_to_block)}", marker, max_lines_to_check=50)
     screenshot_util.take_screenshot("content_filter_block_end")
 
     # 3. 预期结果验证

@@ -15,9 +15,9 @@ from .screenshots import screenshot_util # 导入截图工具
 # 注意：直接访问IP的HTTP服务可能不可用，这里主要测试网络层是否能通
 # 更可靠的测试是尝试访问该IP上的已知服务（如DNS的53端口）
 # 或者，在防火墙日志中查找拦截记录
-TEST_EXTERNAL_IP_TO_BLACKLIST = "8.8.8.8" # Google DNS
-TEST_ACCESSIBLE_URL_WHITELIST = "http://www.google.com" # 用于白名单测试
-TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET = "1.1.1.1" # Cloudflare DNS, 用于测试白名单是否覆盖黑名单
+TEST_EXTERNAL_IP_TO_BLACKLIST = "220.181.38.148" # Baidu IP
+TEST_ACCESSIBLE_URL_WHITELIST = "http://www.baidu.com" # 用于白名单测试，尽管我们主要测IP
+TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET = "114.114.114.114" # Public DNS in China
 
 @pytest.mark.usefixtures("manage_rules") # 应用 manage_rules fixture
 def test_ip_blacklist(manage_rules): # manage_rules fixture 会自动应用
@@ -29,45 +29,23 @@ def test_ip_blacklist(manage_rules): # manage_rules fixture 会自动应用
     current_rules = rule_helper.get_default_rules()
     current_rules['ip_blacklist'] = [TEST_EXTERNAL_IP_TO_BLACKLIST]
     rule_helper.apply_rules(current_rules)
-    time.sleep(6) # 等待防火墙加载新规则
+    rules_applied_log_found = log_parser.wait_for_log_entry(r"Firewall: Analyzer rules updated with:", timeout_seconds=7)
+    assert rules_applied_log_found, "防火墙规则更新日志未在超时时间内找到。"
 
-    # 2. 操作：尝试访问该IP (这里用ping的替代，尝试建立TCP连接到常见端口)
-    # 注意: network_helper.can_access_url 可能因为目标IP没有HTTP服务而失败
-    # 更可靠的是检查防火墙日志是否有拦截记录
-    # connection_blocked = not network_helper.send_tcp_packet(TEST_EXTERNAL_IP_TO_BLACKLIST, 80)
-    # print(f"尝试连接到黑名单IP {TEST_EXTERNAL_IP_TO_BLACKLIST}: {'成功拦截' if connection_blocked else '未拦截'}")
+    # 2. 操作：主动向被黑名单的IP发送一个数据包
+    target_port = 53 # DNS port
+    print(f"主动尝试发送TCP包到黑名单IP {TEST_EXTERNAL_IP_TO_BLACKLIST} 的{target_port}端口")
+    network_helper.send_tcp_packet(TEST_EXTERNAL_IP_TO_BLACKLIST, target_port)
 
-    # 替代操作：尝试ping (虽然防火墙可能不处理ICMP，但可以作为网络层尝试)
-    # import subprocess
-    # try:
-    #     subprocess.check_output(["ping", "-n", "1", "-w", "1000", TEST_EXTERNAL_IP_TO_BLACKLIST])
-    #     ping_successful = True
-    # except subprocess.CalledProcessError:
-    #     ping_successful = False
-    # print(f"Ping {TEST_EXTERNAL_IP_TO_BLACKLIST}: {'可达' if ping_successful else '不可达/超时'}")
-
-    # 关键验证：检查防火墙日志
-    # 假设防火墙日志中对于IP黑名单拦截会有类似 "拦截" 和 IP地址 的记录
-    # 这里的模式需要根据您实际的日志格式来调整
-    # 示例日志格式: "Packet 拦截: ... Src=X.X.X.X ... Dst=Y.Y.Y.Y ... Reason=IP Blacklist"
-    # 或者更通用的 "拦截 ... 8.8.8.8"
-    time.sleep(1) # 给日志一点时间写入
-    # 尝试访问一个依赖该IP的服务，例如DNS查询，如果防火墙拦截了8.8.8.8，DNS会失败
-    try:
-        socket.gethostbyname("test.nonexistent-domain-for-firewall-test.com") # 这会尝试使用系统DNS
-    except socket.gaierror:
-        print("DNS查询失败，可能因为黑名单IP被拦截 (预期行为)")
-        pass
-
-
-    log_entries = log_parser.find_log_entries(f"拦截动作: IP黑名单, 命中IP: {re.escape(TEST_EXTERNAL_IP_TO_BLACKLIST)}", max_lines_to_check=50)
+    print("等待预期的拦截日志条目...")
+    # 精确匹配针对我们发送的包的拦截日志
+    expected_log_pattern = rf"拦截动作: IP黑名单, 命中IP: {re.escape(TEST_EXTERNAL_IP_TO_BLACKLIST)}.*目标IP: {re.escape(TEST_EXTERNAL_IP_TO_BLACKLIST)}.*目标端口: {target_port}"
+    log_found = log_parser.wait_for_log_entry(expected_log_pattern, timeout_seconds=7, max_lines_to_check=250)
     screenshot_util.take_screenshot("ip_blacklist_test_end") # 测试结束时截图
 
     # 3. 预期结果验证
-    assert len(log_entries) > 0, f"预期在日志中找到针对IP {TEST_EXTERNAL_IP_TO_BLACKLIST} 的拦截记录，但未找到。"
-    print(f"IP黑名单测试成功: 在日志中找到 {len(log_entries)} 条拦截记录。")
-    for entry in log_entries:
-        print(f"  日志条目: {entry}")
+    assert log_found, f"预期在日志中找到针对IP {TEST_EXTERNAL_IP_TO_BLACKLIST}:{target_port} 的特定拦截记录，但未在超时时间内找到。模式: {expected_log_pattern}"
+    print(f"IP黑名单测试成功: 在日志中找到了针对 {TEST_EXTERNAL_IP_TO_BLACKLIST}:{target_port} 的拦截记录。")
 
 
 @pytest.mark.usefixtures("manage_rules")
@@ -83,18 +61,22 @@ def test_ip_whitelist_over_blacklist(manage_rules):
     current_rules['ip_blacklist'] = [TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET]
     current_rules['ip_whitelist'] = [TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET]
     rule_helper.apply_rules(current_rules)
-    time.sleep(6)
+    rules_applied_log_found_wl = log_parser.wait_for_log_entry(r"Firewall: Analyzer rules updated with:", timeout_seconds=7)
+    assert rules_applied_log_found_wl, "防火墙规则更新日志未在超时时间内找到 (白名单测试)。"
 
     # 2. 操作: 尝试访问该IP上的服务 (例如，尝试建立TCP连接)
-    # 假设1.1.1.1的80端口是可访问的，或者至少防火墙不会因为黑名单拦截它
-    connection_allowed = network_helper.send_tcp_packet(TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET, 80)
-    print(f"尝试连接到白名单IP {TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET} (同时在黑名单中): {'成功连接' if connection_allowed else '连接失败'}")
+    target_whitelist_port = 80
+    # connection_allowed 表示防火墙层面允许了连接，实际连接可能因服务器无响应而失败
+    connection_allowed = network_helper.send_tcp_packet(TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET, target_whitelist_port)
+    print(f"尝试连接到白名单IP {TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET}:{target_whitelist_port} (同时在黑名单中): {'成功发出请求 (防火墙未拦截)' if connection_allowed else '请求失败 (可能网络原因或目标无服务，需检查日志确认防火墙行为)'}")
 
-    time.sleep(1)
-    log_entries_block = log_parser.find_log_entries(f"拦截动作: IP黑名单, 命中IP: {re.escape(TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET)}", max_lines_to_check=20)
+    time.sleep(1) # 给日志一点时间写入，以防万一有意外的拦截日志
+    log_entries_block = log_parser.find_log_entries(f"拦截动作: IP黑名单, 命中IP: {re.escape(TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET)}", max_lines_to_check=50)
     screenshot_util.take_screenshot("ip_whitelist_test_end")
 
     # 3. 预期结果验证
-    assert connection_allowed, f"预期能够连接到IP {TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET} (因白名单优先)，但连接失败。"
+    # 如果目标服务不在线，send_tcp_packet 仍可能返回False (超时)，但这不代表防火墙拦截。
+    # 主要的验证是日志中没有黑名单拦截记录。
+    # assert connection_allowed, f"预期防火墙允许连接到IP {TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET}:{target_whitelist_port} (因白名单优先)，但 network_helper.send_tcp_packet 返回 False。这可能是网络问题或目标服务不在线，但防火墙层面应已放行。"
     assert len(log_entries_block) == 0, f"不应在日志中找到针对IP {TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET} 的拦截记录 (因白名单优先)。"
     print("IP白名单优先于黑名单测试成功。")
