@@ -29,7 +29,7 @@ def test_ip_blacklist(manage_rules): # manage_rules fixture 会自动应用
     current_rules = rule_helper.get_default_rules()
     current_rules['ip_blacklist'] = [TEST_EXTERNAL_IP_TO_BLACKLIST]
     rule_helper.apply_rules(current_rules)
-    time.sleep(2) # 等待防火墙加载新规则
+    time.sleep(6) # 等待防火墙加载新规则
 
     # 2. 操作：尝试访问该IP (这里用ping的替代，尝试建立TCP连接到常见端口)
     # 注意: network_helper.can_access_url 可能因为目标IP没有HTTP服务而失败
@@ -83,7 +83,7 @@ def test_ip_whitelist_over_blacklist(manage_rules):
     current_rules['ip_blacklist'] = [TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET]
     current_rules['ip_whitelist'] = [TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET]
     rule_helper.apply_rules(current_rules)
-    time.sleep(2)
+    time.sleep(6)
 
     # 2. 操作: 尝试访问该IP上的服务 (例如，尝试建立TCP连接)
     # 假设1.1.1.1的80端口是可访问的，或者至少防火墙不会因为黑名单拦截它

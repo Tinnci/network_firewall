@@ -31,7 +31,7 @@ def test_port_blacklist_http(manage_rules):
     current_rules['port_blacklist'] = [TEST_HTTP_PORT]
     current_rules['protocol_filter']['tcp'] = True # 确保TCP允许，以便测试端口
     rule_helper.apply_rules(current_rules)
-    time.sleep(2)
+    time.sleep(6)
 
     # 2. 操作: 尝试通过HTTP访问网站 (连接到80端口)
     # network_helper.can_access_url 会尝试GET请求，如果端口不通，会返回False
@@ -63,7 +63,7 @@ def test_port_whitelist_https_only(manage_rules):
     # current_rules['port_blacklist'] = [TEST_HTTP_PORT] # 如果白名单不是完全排他性
     current_rules['protocol_filter']['tcp'] = True
     rule_helper.apply_rules(current_rules)
-    time.sleep(2)
+    time.sleep(6)
 
     # 2. 操作
     # 尝试HTTPS (应该允许)
@@ -102,7 +102,7 @@ def test_port_range_blacklist(manage_rules):
     current_rules['port_blacklist'] = [range_to_block] 
     current_rules['protocol_filter']['tcp'] = True
     rule_helper.apply_rules(current_rules)
-    time.sleep(2)
+    time.sleep(6)
 
     # 2. 操作
     # 尝试连接到范围内的端口 (应该禁止)

@@ -3,6 +3,7 @@
 
 import time
 import logging
+import threading # Added import
 from typing import Dict, Optional, Any, Union, Callable
 from PyQt6.QtCore import QObject # Keep QObject inheritance for signals
 
@@ -63,6 +64,11 @@ class Firewall(QObject):
         # 数据包回调
         self.packet_callback = None
 
+        # 规则动态加载相关
+        self.rule_monitor_thread: Optional[threading.Thread] = None
+        self.rule_monitor_stop_event = threading.Event()
+        self.rule_check_interval = CONFIG['rules'].get('reload_check_interval_seconds', 5) # Default 5 seconds
+
         # TODO: 添加统计信息持久化存储功能
         
     def __del__(self):
@@ -80,7 +86,7 @@ class Firewall(QObject):
 
         logger.info("正在启动防火墙...")
         # 加载并应用规则
-        rules = self.rule_manager.get_rules()
+        rules = self.rule_manager.get_rules() # Initial load
         self.analyzer.set_rules(rules)
         logger.debug("规则已加载并应用于Analyzer。")
 
@@ -96,7 +102,12 @@ class Firewall(QObject):
         if self.interceptor.start(filter_string=filter_str):
             self.is_running = True
             logger.info("防火墙已启动")
-            logger.info("Interceptor成功启动。防火墙正在运行。")
+            # 启动规则监控线程
+            self.rule_monitor_stop_event.clear()
+            self.rule_monitor_thread = threading.Thread(target=self._rule_monitoring_loop, daemon=True)
+            self.rule_monitor_thread.name = "RuleMonitorThread"
+            self.rule_monitor_thread.start()
+            logger.info(f"规则文件监控线程已启动，检查间隔: {self.rule_check_interval} 秒。")
             return True
         else:
             logger.error("无法启动包拦截器。防火墙启动中止。")
@@ -110,12 +121,54 @@ class Firewall(QObject):
             return True
 
         logger.info("正在停止防火墙...")
+        # 停止规则监控线程
+        if self.rule_monitor_thread and self.rule_monitor_thread.is_alive():
+            logger.debug("正在停止规则文件监控线程...")
+            self.rule_monitor_stop_event.set()
+            self.rule_monitor_thread.join(timeout=self.rule_check_interval + 1) # Wait a bit longer than interval
+            if self.rule_monitor_thread.is_alive():
+                logger.warning("规则文件监控线程未能正常停止。")
+            else:
+                logger.info("规则文件监控线程已停止。")
+        self.rule_monitor_thread = None
+
         self.interceptor.stop()
         self.processor.stop()
 
         self.is_running = False
         logger.info("防火墙已停止")
         return True
+
+    def _rule_monitoring_loop(self):
+        """定期检查规则文件是否有变动，并按需重载。"""
+        logger.info("规则监控循环已启动。")
+        while not self.rule_monitor_stop_event.is_set():
+            try:
+                if self.rule_manager.check_and_reload_rules():
+                    logger.info("防火墙检测到规则已更新，正在应用到分析器...")
+                    self._update_analyzer_rules()
+                    # Log applied rules summary here as well
+                    if self.analyzer: # Check if analyzer exists
+                        rules_summary = {
+                            'ip_blacklist_size': len(self.analyzer.ip_blacklist),
+                            'ip_whitelist_size': len(self.analyzer.ip_whitelist),
+                            'port_blacklist_size': len(self.analyzer.port_blacklist),
+                            'port_whitelist_size': len(self.analyzer.port_whitelist),
+                            'content_filters_count': len(self.analyzer.content_filters),
+                            'protocol_filter': self.analyzer.protocol_filter
+                        }
+                        logger.info(f"Firewall: Analyzer rules updated with: {rules_summary}")
+                    else:
+                        logger.warning("Firewall: Analyzer not available for logging summary after update.")
+            except Exception as e:
+                logger.error(f"规则监控循环中发生错误: {e}", exc_info=True)
+            
+            # Wait for the specified interval or until stop event is set
+            # self.rule_monitor_stop_event.wait() returns True if event set, False on timeout
+            # We want to loop as long as event is NOT set, so check it before wait or after timeout.
+            if self.rule_monitor_stop_event.wait(timeout=self.rule_check_interval):
+                break # Event was set, exit loop
+        logger.info("规则监控循环已停止。")
 
     def _apply_performance_settings(self):
         """将性能设置应用到相关组件"""
@@ -242,7 +295,18 @@ class Firewall(QObject):
         """Helper to push current rules from RuleManager to Analyzer"""
         if self.analyzer:
             try:
-                self.analyzer.set_rules(self.rule_manager.get_rules())
+                current_rules_from_manager = self.rule_manager.get_rules()
+                # Log summary of rules being pushed to analyzer
+                rules_summary_to_push = {
+                    'ip_blacklist_size': len(current_rules_from_manager.get('ip_blacklist', set())),
+                    'ip_whitelist_size': len(current_rules_from_manager.get('ip_whitelist', set())),
+                    'port_blacklist_size': len(current_rules_from_manager.get('port_blacklist', set())),
+                    'port_whitelist_size': len(current_rules_from_manager.get('port_whitelist', set())),
+                    'content_filters_count': len(current_rules_from_manager.get('content_filters', [])),
+                    'protocol_filter': current_rules_from_manager.get('protocol_filter', {})
+                }
+                logger.debug(f"Firewall: Pushing rules to Analyzer: {rules_summary_to_push}")
+                self.analyzer.set_rules(current_rules_from_manager)
             except Exception as e:
                  logger.error(f"Failed to update analyzer rules: {e}")
 

@@ -26,7 +26,7 @@ def test_content_filter_simple_match_block(manage_rules):
     current_rules['port_blacklist'] = []
     current_rules['port_whitelist'] = [] # 清空白名单，避免干扰
     rule_helper.apply_rules(current_rules)
-    time.sleep(2) # 等待规则加载
+    time.sleep(6) # 等待规则加载
 
     # 2. 操作: 发送包含关键字的数据包
     # 需要一个简单的TCP服务器来接收数据包，或者依赖防火墙日志判断是否拦截
@@ -64,7 +64,7 @@ def test_content_filter_no_match_allow(manage_rules):
     current_rules['port_blacklist'] = []
     current_rules['port_whitelist'] = []
     rule_helper.apply_rules(current_rules)
-    time.sleep(2)
+    time.sleep(6)
 
     # 2. 操作: 发送不包含关键字的数据包
     payload_without_keyword = "some other data without the special keyword".encode('utf-8')

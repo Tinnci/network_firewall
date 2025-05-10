@@ -28,7 +28,7 @@ def test_protocol_filter_allow_tcp_block_udp(manage_rules):
     current_rules['protocol_filter']['tcp'] = True
     current_rules['protocol_filter']['udp'] = False
     rule_helper.apply_rules(current_rules)
-    time.sleep(2) # 等待规则加载
+    time.sleep(6) # 等待规则加载
 
     # 2. 操作
     # 尝试TCP (应该允许)
@@ -69,7 +69,7 @@ def test_protocol_filter_allow_udp_block_tcp(manage_rules):
     current_rules['protocol_filter']['tcp'] = False
     current_rules['protocol_filter']['udp'] = True
     rule_helper.apply_rules(current_rules)
-    time.sleep(2) # 等待规则加载
+    time.sleep(6) # 等待规则加载
 
     # 2. 操作
     # 尝试UDP (应该允许)

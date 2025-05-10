@@ -4,7 +4,8 @@
 import os
 import logging
 import re
-from typing import Dict, Any, Tuple, Union
+import time
+from typing import Dict, Any, Tuple, Union, Optional
 
 # Import from local subpackage and utils
 from .rules import rule_storage, rule_validator
@@ -27,29 +28,72 @@ class RuleManager:
         """
         self.rules_file = rules_file
         self.rules: Dict[str, Any] = {} # Initialize as empty dict
+        self.last_rules_file_mtime: Optional[float] = None
         self._load_and_validate_rules()
+
+    def _get_rules_file_mtime(self) -> Optional[float]:
+        """安全地获取规则文件的最后修改时间。"""
+        if not os.path.exists(self.rules_file):
+            return None
+        try:
+            return os.path.getmtime(self.rules_file)
+        except OSError as e:
+            logger.warning(f"获取规则文件 '{self.rules_file}' 修改时间失败: {e}")
+            return None
 
     def _load_and_validate_rules(self):
         """加载并验证规则，如果失败则使用默认规则。"""
+        logger.debug(f"RuleManager: Attempting to load rules from '{self.rules_file}'")
         raw_data = rule_storage.load_rules_from_file(self.rules_file)
         default_data = rule_storage.load_default_rules_data()
         
         if raw_data is None:
             logger.warning("无法从文件加载规则，将使用默认规则。")
-            # Validate the default data to ensure correct types (e.g., sets)
             self.rules = rule_validator.validate_rules(default_data, default_data) 
-            # Attempt to save the default rules to create the file
             self._save_rules_to_storage() 
         else:
-            # Validate the loaded data
             self.rules = rule_validator.validate_rules(raw_data, default_data)
-            # Optionally save back immediately if validation cleaned up data
-            # self._save_rules_to_storage() 
+        
+        # Log summary of loaded rules (be careful with large rule sets)
+        logger.debug(f"RuleManager: Rules loaded. IP Blacklist size: {len(self.rules.get('ip_blacklist', []))}, Content Filters count: {len(self.rules.get('content_filters', []))}")
+
+        # Update mtime after loading/saving
+        self.last_rules_file_mtime = self._get_rules_file_mtime()
+        if self.last_rules_file_mtime is None and os.path.exists(self.rules_file):
+            # If file was created by save_rules_to_storage, mtime might be None initially if get_mtime failed before creation.
+            # Try to get it again.
+            self.last_rules_file_mtime = self._get_rules_file_mtime()
 
     def _save_rules_to_storage(self) -> bool:
         """将当前内存中的规则保存到存储。"""
-        # The save function in rule_storage handles converting sets to lists
-        return rule_storage.save_rules_to_file(self.rules_file, self.rules)
+        success = rule_storage.save_rules_to_file(self.rules_file, self.rules)
+        if success:
+            self.last_rules_file_mtime = self._get_rules_file_mtime() # Update mtime after successful save
+        return success
+
+    def check_and_reload_rules(self) -> bool:
+        """
+        检查规则文件是否有变动，如果有则重新加载。
+        返回:
+            bool: 如果规则被重新加载则返回 True，否则 False。
+        """
+        current_mtime = self._get_rules_file_mtime()
+
+        if current_mtime is None:
+            # Rule file might have been deleted.
+            if self.last_rules_file_mtime is not None: # It existed before
+                logger.warning(f"规则文件 '{self.rules_file}' 已被删除。将尝试加载默认规则。")
+                self._load_and_validate_rules() # This will load defaults and save, updating mtime
+                return True # Rules were reloaded (to defaults)
+            # If it never existed or was already gone, nothing to do.
+            return False
+
+        if self.last_rules_file_mtime is None or current_mtime != self.last_rules_file_mtime:
+            logger.info(f"规则文件 '{self.rules_file}' 已更改 (mtime: {current_mtime} vs {self.last_rules_file_mtime})，正在重新加载...")
+            self._load_and_validate_rules()
+            logger.info("规则已成功重新加载。")
+            return True
+        return False
 
     def get_rules(self) -> Dict[str, Any]:
         """获取当前内存中的规则 (包含集合等内部使用的数据结构)。"""
