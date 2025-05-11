@@ -5,7 +5,7 @@ import time
 import logging
 import threading # Added import
 from typing import Dict, Optional, Any, Union, Callable
-from PyQt6.QtCore import QObject # Keep QObject inheritance for signals
+from PyQt6.QtCore import QObject, pyqtSignal # Keep QObject inheritance for signals
 
 # Import from local modules
 from .rule_manager import RuleManager
@@ -31,12 +31,13 @@ class Firewall(QObject):
     """防火墙主类，协调各个组件"""
     # 使用传递的信号而不是直接引用
     log_signal = signal_handler_instance.log_signal
+    rules_updated_signal = pyqtSignal() # New signal for when rules are internally updated and applied
 
     def __init__(self, rules_file: Optional[str] = None): # Allow overriding rules file path
         """初始化防火墙"""
         super().__init__()
         # Save the signal handler instance, but don't create strong references
-        # self.signal_handler = signal_handler_instance 
+        # self.signal_handler = signal_handler_instance
 
         logger.info("正在初始化防火墙...")
         
@@ -147,6 +148,7 @@ class Firewall(QObject):
                 if self.rule_manager.check_and_reload_rules():
                     logger.info("防火墙检测到规则已更新，正在应用到分析器...")
                     self._update_analyzer_rules()
+                    self.rules_updated_signal.emit() # Emit signal after rules reloaded and applied
                     # Log applied rules summary here as well
                     if self.analyzer: # Check if analyzer exists
                         rules_summary = {
@@ -306,6 +308,7 @@ class Firewall(QObject):
                     f"Protocol Filter: {new_rules.get('protocol_filter', {})}")
 
         self.analyzer.set_rules(new_rules)
+        # self.rules_updated_signal.emit() # Emitted in the calling context after this helper returns
         # Apply settings only if they are relevant upon rule update, or handle separately
         # self.analyzer.set_settings(self.performance_settings)
 
@@ -314,6 +317,7 @@ class Firewall(QObject):
         result = self.rule_manager.add_ip_to_blacklist(ip)
         if result:
             self._update_analyzer_rules()
+            self.rules_updated_signal.emit()
             # logger.info(f"IP {ip} added to blacklist.") # RuleManager logs this
         return result
 
@@ -322,6 +326,7 @@ class Firewall(QObject):
         result = self.rule_manager.remove_ip_from_blacklist(ip)
         if result:
             self._update_analyzer_rules()
+            self.rules_updated_signal.emit()
             # logger.info(f"IP {ip} removed from blacklist.")
         return result
 
@@ -330,6 +335,7 @@ class Firewall(QObject):
         result = self.rule_manager.add_ip_to_whitelist(ip)
         if result:
             self._update_analyzer_rules()
+            self.rules_updated_signal.emit()
             # logger.info(f"IP {ip} added to whitelist.")
         return result
 
@@ -338,6 +344,7 @@ class Firewall(QObject):
         result = self.rule_manager.remove_ip_from_whitelist(ip)
         if result:
             self._update_analyzer_rules()
+            self.rules_updated_signal.emit()
             # logger.info(f"IP {ip} removed from whitelist.")
         return result
 
@@ -346,6 +353,7 @@ class Firewall(QObject):
         result = self.rule_manager.add_port_to_blacklist(port)
         if result:
             self._update_analyzer_rules()
+            self.rules_updated_signal.emit()
             # logger.info(f"Port/range {port} added to blacklist.")
         return result
 
@@ -354,6 +362,7 @@ class Firewall(QObject):
         result = self.rule_manager.remove_port_from_blacklist(port)
         if result:
             self._update_analyzer_rules()
+            self.rules_updated_signal.emit()
             # logger.info(f"Port/range {port} removed from blacklist.")
         return result
 
@@ -362,6 +371,7 @@ class Firewall(QObject):
         result = self.rule_manager.add_port_to_whitelist(port)
         if result:
             self._update_analyzer_rules()
+            self.rules_updated_signal.emit()
             # logger.info(f"Port/range {port} added to whitelist.")
         return result
 
@@ -370,6 +380,7 @@ class Firewall(QObject):
         result = self.rule_manager.remove_port_from_whitelist(port)
         if result:
             self._update_analyzer_rules()
+            self.rules_updated_signal.emit()
             # logger.info(f"Port/range {port} removed from whitelist.")
         return result
 
@@ -378,6 +389,7 @@ class Firewall(QObject):
         result = self.rule_manager.add_content_filter(pattern)
         if result:
             self._update_analyzer_rules()
+            self.rules_updated_signal.emit()
             # logger.info(f"Content filter '{pattern}' added.")
         return result
 
@@ -386,6 +398,7 @@ class Firewall(QObject):
         result = self.rule_manager.remove_content_filter(pattern)
         if result:
             self._update_analyzer_rules()
+            self.rules_updated_signal.emit()
             # logger.info(f"Content filter '{pattern}' removed.")
         return result
 
@@ -394,6 +407,7 @@ class Firewall(QObject):
         result = self.rule_manager.set_protocol_filter(protocol, enabled)
         if result:
              self._update_analyzer_rules()
+             self.rules_updated_signal.emit()
              # logger.info(f"{protocol.upper()} filter set to {enabled}.") # RuleManager logs this
         return result
 

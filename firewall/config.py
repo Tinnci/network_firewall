@@ -84,6 +84,8 @@ def load_config_from_file(filepath: str = "config.yaml") -> Dict:
         else:
             logger.info(f"Configuration file {filepath} not found. Using defaults.")
             # Optionally save default config if file doesn't exist
+            # This can be useful for users to see the available options.
+            # However, enable with caution if the default config path is not user-writable by default.
             # try:
             #     with open(filepath, 'w', encoding='utf-8') as f:
             #         yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
@@ -137,9 +139,3 @@ def load_config_from_file(filepath: str = "config.yaml") -> Dict:
 
 # Load the configuration once when the module is imported
 CONFIG = load_config_from_file()
-
-# Example usage:
-# if __name__ == "__main__":
-#     print("Loaded Configuration:")
-#     import json
-#     print(json.dumps(CONFIG, indent=2, default=str)) # Use default=str for non-serializable logging levels

@@ -137,7 +137,8 @@ class PacketInterceptor:
                     
                 if packet:
                     # --- DEBUG LOG START ---
-                    logger.critical(f"Interceptor: Received packet: {getattr(packet, 'src_addr', 'N/A')}:{getattr(packet, 'src_port', 'N/A')} -> {getattr(packet, 'dst_addr', 'N/A')}:{getattr(packet, 'dst_port', 'N/A')}, IsLoopback: {getattr(packet, 'is_loopback', 'N/A')}, Direction: {packet.direction if hasattr(packet, 'direction') else 'N/A'}")
+                    # logger.critical(f"Interceptor: Received packet: {getattr(packet, 'src_addr', 'N/A')}:{getattr(packet, 'src_port', 'N/A')} -> {getattr(packet, 'dst_addr', 'N/A')}:{getattr(packet, 'dst_port', 'N/A')}, IsLoopback: {getattr(packet, 'is_loopback', 'N/A')}, Direction: {packet.direction if hasattr(packet, 'direction') else 'N/A'}")
+                    logger.debug(f"Interceptor: Received packet: {getattr(packet, 'src_addr', 'N/A')}:{getattr(packet, 'src_port', 'N/A')} -> {getattr(packet, 'dst_addr', 'N/A')}:{getattr(packet, 'dst_port', 'N/A')}, IsLoopback: {getattr(packet, 'is_loopback', 'N/A')}, Direction: {packet.direction if hasattr(packet, 'direction') else 'N/A'}")
                     # --- DEBUG LOG END ---
                     if self.packet_handler_callback:
                         try:
@@ -178,9 +179,9 @@ class PacketInterceptor:
             self.divert.set_param(Param.QUEUE_TIME, queue_time)
             logger.info(f"WinDivert queue length set to {queue_len}, queue time to {queue_time}ms")
             # Optional: Validate params were set using get_param
-            # current_len = self.divert.get_param(Param.QUEUE_LEN)
-            # current_time = self.divert.get_param(Param.QUEUE_TIME)
-            # logger.debug(f"Verified WinDivert params: QUEUE_LEN={current_len}, QUEUE_TIME={current_time}")
+            current_len = self.divert.get_param(Param.QUEUE_LEN)
+            current_time = self.divert.get_param(Param.QUEUE_TIME)
+            logger.debug(f"Verified WinDivert params: QUEUE_LEN={current_len}, QUEUE_TIME={current_time}")
         except Exception as e:
             logger.warning(f"Failed to configure WinDivert parameters: {e}. Using defaults.")
 

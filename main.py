@@ -126,9 +126,12 @@ def main():
     
     # 如果设置了特定的环境变量 (例如在 conftest.py 中设置)，则自动启动防火墙
     if os.environ.get("AUTO_START_FIREWALL_FOR_TESTING") == "1":
-        print("Main.py: 检测到 AUTO_START_FIREWALL_FOR_TESTING=1，将自动启动防火墙。")
+        print("Main.py: Detected AUTO_START_FIREWALL_FOR_TESTING=1, will auto-start firewall.")
         # 需要延迟一点点，确保UI完全加载完毕并且事件循环开始处理
         QTimer.singleShot(1000, lambda: window._toggle_firewall()) # 延迟1秒尝试启动
+
+    # Log that the application is fully ready
+    logging.getLogger('main').info("防火墙应用已完全初始化并准备好进行交互。")
 
     # 运行应用程序
     exit_code = app.exec()

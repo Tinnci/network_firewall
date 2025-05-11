@@ -97,20 +97,3 @@ def is_private_ip(ip_str: str) -> bool:
         return ip.is_private or ip.is_loopback
     except ValueError:
         return False
-
-# Example usage:
-# if __name__ == "__main__":
-#     print(f"192.168.1.1 valid? {is_valid_ip_or_cidr('192.168.1.1')}")
-#     print(f"10.0.0.0/8 valid? {is_valid_ip_or_cidr('10.0.0.0/8')}")
-#     print(f"invalid-ip valid? {is_valid_ip_or_cidr('invalid-ip')}")
-#     print(f"80 valid? {is_valid_port_or_range(80)}")
-#     print(f"'8080' valid? {is_valid_port_or_range('8080')}")
-#     print(f"'8000-9000' valid? {is_valid_port_or_range('8000-9000')}")
-#     print(f"70000 valid? {is_valid_port_or_range(70000)}")
-#     print(f"'abc' valid? {is_valid_port_or_range('abc')}")
-#     print(f"Parse '80': {parse_port_rule('80')}")
-#     print(f"Parse '8000-8080': {parse_port_rule('8000-8080')}")
-#     print(f"Parse 'invalid': {parse_port_rule('invalid')}")
-#     print(f"127.0.0.1 private? {is_private_ip('127.0.0.1')}")
-#     print(f"192.168.1.100 private? {is_private_ip('192.168.1.100')}")
-#     print(f"8.8.8.8 private? {is_private_ip('8.8.8.8')}")

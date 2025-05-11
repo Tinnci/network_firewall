@@ -7,12 +7,18 @@ import time
 import ctypes
 import re
 from .helpers import rule_helper, log_parser
+import tempfile
+import shutil # Added for directory cleanup if needed, though for logs it might be fine to keep
 
-LOG_FILE_PATH = "logs/firewall.log"
-# 根据 firewall.core.packet_interceptor 的日志，或者 main.py 中更早的、可靠的启动完成标志
-# "Firewall application started and ready." - 如果有这样的日志会更好
-# "Packet interceptor started." - 似乎是 PacketInterceptor 模块中的日志
-FIREWALL_READY_MESSAGE = r"Packet interceptor started" # 使用r""处理正则表达式特殊字符，尽管这里没有
+# --- 常量定义 ---
+LOG_DIR = "logs"
+# 将 LOG_FILE_PATH 和 MAIN_LOG_FILE 统一
+MAIN_LOG_FILE = os.path.join(LOG_DIR, "firewall.log")
+SUMMARY_LOG_FILE = os.path.join(LOG_DIR, "test_session_block_summary.log")
+DEFAULT_TEST_CSV_EXPORT_DIR = os.path.join(LOG_DIR, "test_csv_exports") # New constant for CSV export path
+
+# 根据 main.py 中新的、明确的启动完成标志
+FIREWALL_READY_MESSAGE = r"防火墙应用已完全初始化并准备好进行交互。"
 FIREWALL_START_TIMEOUT_SECONDS = 45 # 增加超时时间
 
 # Global or session-scoped storage for test results
@@ -20,9 +26,6 @@ FIREWALL_START_TIMEOUT_SECONDS = 45 # 增加超时时间
 _session_test_results = {}
 
 FIREWALL_START_TIMEOUT = 10 # seconds
-LOG_DIR = "logs"
-MAIN_LOG_FILE = os.path.join(LOG_DIR, "firewall.log")
-SUMMARY_LOG_FILE = os.path.join(LOG_DIR, "test_session_block_summary.log") # Define summary log file path
 
 def is_admin():
     """检查当前进程是否以管理员权限运行 (仅限Windows)"""
@@ -38,12 +41,12 @@ def is_admin():
 def clear_log_file_for_startup():
     """清空日志文件，以便检测新的启动消息"""
     try:
-        if os.path.exists(LOG_FILE_PATH):
-            with open(LOG_FILE_PATH, 'w') as f:
+        if os.path.exists(MAIN_LOG_FILE): # 使用统一的常量
+            with open(MAIN_LOG_FILE, 'w') as f:
                 f.write("")
-            print(f"启动前已清空日志文件: {LOG_FILE_PATH}")
+            print(f"启动前已清空日志文件: {MAIN_LOG_FILE}")
         # 确保日志目录存在
-        log_dir = os.path.dirname(LOG_FILE_PATH)
+        log_dir = os.path.dirname(MAIN_LOG_FILE) # 使用统一的常量
         if log_dir and not os.path.exists(log_dir):
             os.makedirs(log_dir)
             print(f"启动前已创建日志目录: {log_dir}")
@@ -92,17 +95,30 @@ def pytest_sessionstart(session):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def firewall_service(request):
+def firewall_service(request, monkeypatch_session): # monkeypatch_session for session-scoped env var changes
     """会话级别的fixture，用于启动和停止防火墙主程序 (main.py)"""
     print("\n启动防火墙服务 (main.py)...")
     firewall_process = None
-    original_skip_local_env = os.environ.get('FIREWALL_EFFECTIVE_SKIP_LOCAL')
-    os.environ['FIREWALL_EFFECTIVE_SKIP_LOCAL'] = "0"
-    print("Conftest: Set FIREWALL_EFFECTIVE_SKIP_LOCAL=0 for testing.")
+    
+    # 使用 monkeypatch_session 来管理会话级别的环境变量
+    monkeypatch_session.setenv('FIREWALL_EFFECTIVE_SKIP_LOCAL', "0")
+    print("Conftest: Set FIREWALL_EFFECTIVE_SKIP_LOCAL=0 for testing session.")
+    monkeypatch_session.setenv('AUTO_START_FIREWALL_FOR_TESTING', "1")
+    print("Conftest: Set AUTO_START_FIREWALL_FOR_TESTING=1 for testing session.")
 
-    original_auto_start_env = os.environ.get('AUTO_START_FIREWALL_FOR_TESTING')
-    os.environ['AUTO_START_FIREWALL_FOR_TESTING'] = "1"
-    print("Conftest: Set AUTO_START_FIREWALL_FOR_TESTING=1 for testing.")
+    # --- 新增：默认启用并设置CSV自动导出路径 ---
+    try:
+        os.makedirs(DEFAULT_TEST_CSV_EXPORT_DIR, exist_ok=True)
+        monkeypatch_session.setenv('FIREWALL_AUTO_EXPORT_CSV_PATH', DEFAULT_TEST_CSV_EXPORT_DIR)
+        print(f"Conftest: Set FIREWALL_AUTO_EXPORT_CSV_PATH={DEFAULT_TEST_CSV_EXPORT_DIR} for automated CSV exports during testing session.")
+    except Exception as e:
+        print(f"Conftest: Warning - Failed to create or set FIREWALL_AUTO_EXPORT_CSV_PATH: {e}")
+    # --- 完成新增 ---
+
+    # 如果需要在测试期间禁用CSV导出，也可以在这里全局设置 (这将覆盖上面的设置，但通常我们希望默认启用)
+    # monkeypatch_session.setenv('FIREWALL_TESTING_NO_CSV_EXPORT', '1')
+    # print("Conftest: Set FIREWALL_TESTING_NO_CSV_EXPORT=1 for testing session (globally).")
+
 
     # 确保在启动防火墙前日志是干净的，以便准确检测启动消息
     clear_log_file_for_startup()
@@ -125,15 +141,15 @@ def firewall_service(request):
             if firewall_process.poll() is not None: # 进程意外退出
                 pytest.fail(f"防火墙进程在等待就绪期间意外终止，返回码: {firewall_process.returncode}。请检查防火墙自身日志或错误输出。")
             
-            if os.path.exists(LOG_FILE_PATH):
+            if os.path.exists(MAIN_LOG_FILE): # 使用统一的常量
                 try:
-                    with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f:
+                    with open(MAIN_LOG_FILE, 'r', encoding='utf-8') as f: # 使用统一的常量
                         current_log_content = f.readlines()
                         # 只检查新行，避免重复处理大型日志
-                        new_lines = [line for i, line in enumerate(current_log_content) if (LOG_FILE_PATH, i) not in log_lines_checked_for_ready]
+                        new_lines = [line for i, line in enumerate(current_log_content) if (MAIN_LOG_FILE, i) not in log_lines_checked_for_ready]
                         
                         for line_num_original, line_content in enumerate(current_log_content):
-                            log_lines_checked_for_ready.add((LOG_FILE_PATH, line_num_original))
+                            log_lines_checked_for_ready.add((MAIN_LOG_FILE, line_num_original))
 
                         for line in new_lines:
                             if re.search(FIREWALL_READY_MESSAGE, line):
@@ -154,7 +170,7 @@ def firewall_service(request):
                     firewall_process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     firewall_process.kill()
-            pytest.fail(f"防火墙应用未在 {FIREWALL_START_TIMEOUT_SECONDS} 秒内发出就绪信号 ('{FIREWALL_READY_MESSAGE}' 未在 {LOG_FILE_PATH} 中找到)。")
+            pytest.fail(f"防火墙应用未在 {FIREWALL_START_TIMEOUT_SECONDS} 秒内发出就绪信号 ('{FIREWALL_READY_MESSAGE}' 未在 {MAIN_LOG_FILE} 中找到)。")
         
         yield firewall_process # 测试会话期间防火墙保持运行
 
@@ -178,23 +194,8 @@ def firewall_service(request):
         else:
             print("防火墙进程未成功启动或已被处理。")
 
-        # 清理/恢复环境变量
-        if original_skip_local_env is None:
-            if 'FIREWALL_EFFECTIVE_SKIP_LOCAL' in os.environ:
-                del os.environ['FIREWALL_EFFECTIVE_SKIP_LOCAL']
-                print("Conftest: Cleared FIREWALL_EFFECTIVE_SKIP_LOCAL environment variable.")
-        else:
-            os.environ['FIREWALL_EFFECTIVE_SKIP_LOCAL'] = original_skip_local_env
-            print(f"Conftest: Restored FIREWALL_EFFECTIVE_SKIP_LOCAL to original value: '{original_skip_local_env}'.")
-
-        # 清理/恢复 AUTO_START_FIREWALL_FOR_TESTING 环境变量
-        if original_auto_start_env is None:
-            if 'AUTO_START_FIREWALL_FOR_TESTING' in os.environ:
-                del os.environ['AUTO_START_FIREWALL_FOR_TESTING']
-                print("Conftest: Cleared AUTO_START_FIREWALL_FOR_TESTING environment variable.")
-        else:
-            os.environ['AUTO_START_FIREWALL_FOR_TESTING'] = original_auto_start_env
-            print(f"Conftest: Restored AUTO_START_FIREWALL_FOR_TESTING to original value: '{original_auto_start_env}'.")
+        # monkeypatch_session 会自动处理环境变量的恢复，无需手动清理
+        print("Conftest: Environment variables managed by monkeypatch_session will be restored automatically.")
 
     # Teardown: Log final stats and write summary
     if _session_test_results:
@@ -250,3 +251,65 @@ def manage_rules():
     yield # 测试将在此处运行
     rule_helper.restore_rules()
     print("规则文件已在测试后恢复。")
+
+@pytest.fixture(scope="session")
+def monkeypatch_session():
+    """会话级别的 monkeypatch fixture。"""
+    from _pytest.monkeypatch import MonkeyPatch
+    mp = MonkeyPatch()
+    yield mp
+    mp.undo()
+
+def test_csv_export_automated(monkeypatch, qtbot, your_main_window_fixture):
+    # ... （启动防火墙等设置） ...
+    window = your_main_window_fixture # 获取 MainWindow 实例
+
+    # 创建一个临时目录用于测试导出
+    # with tempfile.TemporaryDirectory() as tmpdir: # Now using default path from conftest
+        # 可以指定完整路径，或者只指定目录让 log_tab 生成文件名
+        # 选项1: 指定完整文件名
+        # auto_csv_path = os.path.join(tmpdir, "automated_log_export.csv")
+        # 选项2: 只指定目录，文件名会自动生成 (如果 log_tab 支持)
+        # 为了简单和可预测，我们最好在测试中指定完整的文件名
+    
+    # 由于 conftest 现在设置了默认导出目录，我们可以依赖它
+    # 如果特定测试需要不同的路径，它仍然可以在测试函数内部用 monkeypatch.setenv 覆盖
+    # auto_csv_path = os.path.join(tmpdir, "test_export.csv") 
+    # monkeypatch.setenv('FIREWALL_AUTO_EXPORT_CSV_PATH', auto_csv_path) # This would override conftest session setting
+    
+    # 我们需要一个方法来知道实际导出的文件名，因为它是带时间戳的
+    # 我们可以检查 DEFAULT_TEST_CSV_EXPORT_DIR 目录中的最新文件
+    # 或者，如果 LogTab 提供了信号或方法来获取最后导出的文件名，那会更好
+
+    log_tab = window.log_tab # 假设您可以这样访问 LogTab 实例
+    
+    # 确保 log_tab 中有数据 (这里可能需要先产生一些日志)
+    # ... 产生一些日志到UI ...
+    # 例如，直接调用 add_log_entry (如果测试需要，并注意线程安全)
+    # log_tab.add_log_entry({"log_type": "packet", "packet_info": {...}, "timestamp": "..."})
+    # qtbot.wait(100) # 等待UI更新
+
+    # 获取导出前目录中的文件列表
+    files_before_export = set(os.listdir(DEFAULT_TEST_CSV_EXPORT_DIR))
+
+    log_tab._export_filtered_logs_to_csv() # 直接调用导出方法
+
+    # 获取导出后目录中的文件列表
+    files_after_export = set(os.listdir(DEFAULT_TEST_CSV_EXPORT_DIR))
+    
+    new_files = files_after_export - files_before_export
+    assert len(new_files) == 1, "A new CSV file should have been exported"
+    exported_csv_filename = new_files.pop()
+    exported_csv_filepath = os.path.join(DEFAULT_TEST_CSV_EXPORT_DIR, exported_csv_filename)
+
+    # 验证文件是否已创建
+    assert os.path.exists(exported_csv_filepath)
+    print(f"Automated CSV export successful. File created at: {exported_csv_filepath}")
+        
+    # 可选：验证CSV内容
+    with open(exported_csv_filepath, 'r', encoding='utf-8') as f:
+        content = f.read()
+        assert "Timestamp,Log Type" in content # 简单检查表头
+            # ... 更详细的内容检查 ...
+
+    # monkeypatch 会在测试退出时自动恢复环境变量

@@ -30,14 +30,3 @@ def get_system_resource_usage() -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"获取系统资源使用情况时出错: {e}")
         return {}
-
-# Example usage:
-# if __name__ == "__main__":
-#     resources = get_system_resource_usage()
-#     if resources:
-#         print("System Resource Usage:")
-#         print(f"  CPU: {resources['cpu_percent']}%")
-#         print(f"  Memory: {resources['memory_percent']}%")
-#         print(f"  Net IO: {resources['io_counters']}")
-#     else:
-#         print("Failed to get system resource usage.")

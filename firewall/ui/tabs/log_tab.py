@@ -4,13 +4,15 @@
 import re
 import logging # Added for logger
 import csv # Added for CSV export
+import os # Added for environment variable access
+import datetime # For generating timestamped filenames if only a directory is provided
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget, 
     QTableWidgetItem, QHeaderView, QAbstractItemView, QLabel, QLineEdit, QComboBox,
     QFileDialog, QMessageBox # Added QFileDialog and QMessageBox
 )
-from PyQt6.QtCore import pyqtSlot, pyqtSignal
+from PyQt6.QtCore import pyqtSlot, pyqtSignal, Qt # Added Qt
 from PyQt6.QtGui import QColor
 
 # Import config
@@ -223,6 +225,8 @@ class LogTab(QWidget):
 
             log_type = log_entry.get('log_type', 'general')
             packet_info = log_entry.get('packet_info')
+            
+            first_item_for_data = None # To store the item where we'll set UserRole data
 
             if log_type == 'packet' and packet_info:
                 display_time = log_entry.get('timestamp', '').split(',')[0]
@@ -233,10 +237,12 @@ class LogTab(QWidget):
                 dst_ip = packet_info.get('dst_addr', 'N/A')
                 dst_port = str(packet_info.get('dst_port', 'N/A'))
                 size = str(packet_info.get('payload_size', 'N/A'))
-                # Предполагается, что details правилоа информация хранится в 'reason_details'
-                details = packet_info.get('reason_details', 'N/A') 
+                details = packet_info.get('reason_details', 'N/A')
 
-                self.log_table.setItem(row_position, COL_TIME, QTableWidgetItem(display_time))
+                time_item = QTableWidgetItem(display_time)
+                self.log_table.setItem(row_position, COL_TIME, time_item)
+                first_item_for_data = time_item
+
                 self.log_table.setItem(row_position, COL_SRC_IP, QTableWidgetItem(src_ip))
                 self.log_table.setItem(row_position, COL_DST_IP, QTableWidgetItem(dst_ip))
                 self.log_table.setItem(row_position, COL_SRC_PORT, QTableWidgetItem(src_port))
@@ -248,7 +254,7 @@ class LogTab(QWidget):
                 elif action == '放行': action_item.setForeground(QColor('green'))
                 self.log_table.setItem(row_position, COL_ACTION, action_item)
                 self.log_table.setItem(row_position, COL_SIZE, QTableWidgetItem(size))
-                self.log_table.setItem(row_position, COL_DETAILS, QTableWidgetItem(details)) # New column for details/reason
+                self.log_table.setItem(row_position, COL_DETAILS, QTableWidgetItem(details))
             
             else: # General log or fallback
                 display_time = log_entry.get('timestamp', '').split(',')[0]
@@ -256,7 +262,10 @@ class LogTab(QWidget):
                 logger_name = log_entry.get('name', 'Unknown')
                 message = log_entry.get('message', log_entry.get('formatted_message', 'Invalid log entry'))
 
-                self.log_table.setItem(row_position, COL_TIME, QTableWidgetItem(display_time))
+                time_item = QTableWidgetItem(display_time)
+                self.log_table.setItem(row_position, COL_TIME, time_item)
+                first_item_for_data = time_item
+
                 full_message = f"[{logger_name}] {message.strip()}" 
                 message_item = QTableWidgetItem(full_message) 
                 if level == "ERROR" or level == "CRITICAL": message_item.setForeground(QColor('darkRed'))
@@ -264,10 +273,9 @@ class LogTab(QWidget):
                 self.log_table.setItem(row_position, COL_SRC_IP, message_item)
                 self.log_table.setSpan(row_position, COL_SRC_IP, 1, self.log_table.columnCount() - 1) 
             
-            # Note: Row limiting for the *display* is implicitly handled by only adding filtered items
-            # from a buffer that is already limited by self.max_rows.
-            # If self.all_log_entries_buffer grows beyond self.max_rows, oldest are removed.
-            # When _populate_table_from_buffer is called, it shows max_rows (or fewer if filtered).
+            # Store the original log_entry dict with the row for accurate export
+            if first_item_for_data:
+                first_item_for_data.setData(Qt.ItemDataRole.UserRole, log_entry)
 
         except Exception as e:
             logger.error(f"Error in _add_log_dict_to_table: {e}", exc_info=True)
@@ -397,8 +405,9 @@ class LogTab(QWidget):
         self.src_port_filter.clear()
         self.dst_port_filter.clear()
         self.protocol_filter_combo.setCurrentIndex(0) # All
-        self.action_filter_combo.setCurrentIndex(0) # All
-        self._init_filters() # Reset stored filters
+        self.action_filter_combo.setCurrentIndex(0) # All -> No, keep default as '拦截' as per init
+        self._init_filters() # Reset stored filters (action will be '拦截')
+        self._apply_current_filters_to_ui_controls() # Ensure UI reflects this
         logger.info("Log display, buffer, and filters cleared.")
 
         # Optionally show a message box, but might be better handled by main window if needed
@@ -406,48 +415,100 @@ class LogTab(QWidget):
 
     def _export_filtered_logs_to_csv(self):
         """导出当前通过过滤器显示的日志条目到CSV文件。"""
-        if not self.all_log_entries_buffer:
-            QMessageBox.information(self, "导出日志", "没有日志可导出。")
+
+        # 1. Check environment variable to completely disable export during testing
+        disable_export_env_var = os.environ.get('FIREWALL_TESTING_NO_CSV_EXPORT', '0').lower()
+        if disable_export_env_var in ['1', 'true', 'yes']:
+            logger.info("FIREWALL_TESTING_NO_CSV_EXPORT is set. Skipping CSV export for this run.")
             return
 
-        # 获取当前应用的过滤器所筛选出的日志
-        # Note: _populate_table_from_buffer updates the visible table,
-        # but for export, we should re-filter the whole buffer to ensure consistency.
-        filtered_logs_to_export = [
-            log_entry for log_entry in self.all_log_entries_buffer if self._matches_filters(log_entry)
-        ]
+        # 2. Prepare log entries to be exported (from visible table rows)
+        visible_log_entries = []
+        for i in range(self.log_table.rowCount()):
+            item = self.log_table.item(i, COL_TIME) 
+            if item:
+                log_entry_data = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(log_entry_data, dict):
+                    visible_log_entries.append(log_entry_data)
+                else:
+                    logger.warning(f"Row {i} in log table is missing original log_entry data for export or data is not a dict.")
+            else:
+                logger.warning(f"Row {i} in log table has no item in the first column for export.")
 
-        if not filtered_logs_to_export:
-            QMessageBox.information(self, "导出日志", "当前过滤器下没有匹配的日志可导出。")
+        if not visible_log_entries:
+            # Only show message box if not in an automated export mode
+            if not os.environ.get('FIREWALL_AUTO_EXPORT_CSV_PATH'):
+                QMessageBox.information(self, "导出日志", "表格中没有可见的日志可导出。")
+            else:
+                logger.info("Automated CSV export: No visible log entries to export.")
             return
 
-        parent_window = self.window() 
-        file_path, _ = QFileDialog.getSaveFileName(
-            parent_window, 
-            "导出过滤后的日志为CSV", 
-            "", 
-            "CSV 文件 (*.csv);;所有文件 (*)"
-        )
+        # 3. Determine file path: either from env var or QFileDialog
+        file_path = None
+        auto_export_path_str = os.environ.get('FIREWALL_AUTO_EXPORT_CSV_PATH')
 
-        if not file_path:
+        if auto_export_path_str:
+            # Ensure the path is absolute or handle relative paths appropriately
+            # For simplicity, assume it's an absolute path or relative to CWD
+            # If it's a directory, generate a filename. If it's a file, use it.
+            if os.path.isdir(auto_export_path_str):
+                # It's a directory, create a filename
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"firewall_log_export_{timestamp}.csv"
+                file_path = os.path.join(auto_export_path_str, filename)
+                logger.info(f"Automated CSV export: FIREWALL_AUTO_EXPORT_CSV_PATH is a directory. Using generated filename: {file_path}")
+            elif not os.path.isdir(os.path.dirname(auto_export_path_str)) and os.path.dirname(auto_export_path_str) != '':
+                 # It's a file path but its directory doesn't exist
+                 logger.warning(f"Automated CSV export: Directory for specified path '{auto_export_path_str}' does not exist. Falling back to manual dialog.")
+                 # Fall through to QFileDialog
+            else: # Assume it's a full file path
+                file_path = auto_export_path_str
+                logger.info(f"Automated CSV export: Using FIREWALL_AUTO_EXPORT_CSV_PATH as file path: {file_path}")
+            
+            # Ensure directory exists for the determined file_path
+            if file_path:
+                try:
+                    export_dir = os.path.dirname(file_path)
+                    if export_dir: # Check if export_dir is not empty (e.g. for relative filenames in CWD)
+                        os.makedirs(export_dir, exist_ok=True)
+                except Exception as e:
+                    logger.error(f"Automated CSV export: Failed to create directory {os.path.dirname(file_path)}: {e}. Aborting auto export.")
+                    # Optionally fall back to QFileDialog or just return
+                    if not os.environ.get('FIREWALL_AUTO_EXPORT_CSV_PATH'): # Avoid infinite loop if QFileDialog also fails
+                         QMessageBox.critical(self, "导出失败", f"无法创建导出目录: {os.path.dirname(file_path)}\n错误: {e}")
+                    return # Stop export if directory creation fails in auto mode
+
+        if not file_path: # If auto_export_path_str was not set or was invalid, or dir creation failed and it decided to not proceed
+            parent_window = self.window() 
+            file_path_tuple = QFileDialog.getSaveFileName( # QFileDialog.getSaveFileName returns a tuple
+                parent_window, 
+                "导出过滤后的日志为CSV", 
+                "", 
+                "CSV 文件 (*.csv);;所有文件 (*)"
+            )
+            file_path = file_path_tuple[0] if file_path_tuple else None
+
+
+        if not file_path: # User cancelled or no valid path
+            logger.info("CSV export cancelled by user or no valid path provided.")
             return 
 
+        # 4. Write to CSV
         headers = [
             "Timestamp", "Log Type", "Source IP", "Source Port", 
             "Destination IP", "Destination Port", "Protocol", "Action", 
-            "Size (Bytes)", "Details/Reason" # Changed from "Details/Message"
+            "Size (Bytes)", "Details/Reason"
         ]
 
         try:
             with open(file_path, 'w', newline='', encoding='utf-8-sig') as csvfile:
-                writer = csv.writer(csvfile) # Use csv.writer for list-based rows
-                writer.writerow(headers) # Write the header row
+                writer = csv.writer(csvfile)
+                writer.writerow(headers)
 
-                for log_entry in filtered_logs_to_export:
-                    # Prepare a list for the row in the order of headers
-                    row_list = [''] * len(headers) # Initialize with empty strings
+                for log_entry in visible_log_entries:
+                    row_list = [''] * len(headers)
                     
-                    row_list[headers.index("Timestamp")] = log_entry.get('timestamp', '').split(',')[0] # Get only date-time part
+                    row_list[headers.index("Timestamp")] = log_entry.get('timestamp', '').split(',')[0]
                     row_list[headers.index("Log Type")] = log_entry.get('log_type', 'general')
                     
                     packet_info = log_entry.get('packet_info')
@@ -459,10 +520,8 @@ class LogTab(QWidget):
                         row_list[headers.index("Protocol")] = packet_info.get('protocol', '')
                         row_list[headers.index("Action")] = packet_info.get('action', '')
                         row_list[headers.index("Size (Bytes)")] = str(packet_info.get('payload_size', ''))
-                        # Details/Message can remain empty for packet logs if desired
-                        row_list[headers.index("Details/Reason")] = packet_info.get('reason_details', '') # Store reason for packets
-                    else: # General log
-                        # For general logs, the main content is usually in 'message' or 'formatted_message'
+                        row_list[headers.index("Details/Reason")] = packet_info.get('reason_details', '')
+                    else: 
                         message_content = log_entry.get('message', log_entry.get('formatted_message', ''))
                         logger_name = log_entry.get('name', 'Unknown')
                         level = log_entry.get('levelname', 'INFO')
@@ -470,11 +529,133 @@ class LogTab(QWidget):
                     
                     writer.writerow(row_list)
             
-            QMessageBox.information(self, "导出成功", f"过滤后的日志已成功导出到:\\n{file_path}")
+            success_message = f"当前显示的日志已成功导出到:\n{file_path}"
+            logger.info(success_message)
+            if not auto_export_path_str: # Only show message box if not in automated mode
+                QMessageBox.information(self, "导出成功", success_message)
 
         except IOError as e:
             logger.error(f"导出日志到CSV时发生IO错误: {e}", exc_info=True)
-            QMessageBox.critical(self, "导出失败", f"无法写入文件: {file_path}\\n错误: {e}")
+            if not auto_export_path_str:
+                QMessageBox.critical(self, "导出失败", f"无法写入文件: {file_path}\n错误: {e}")
         except Exception as e:
             logger.error(f"导出日志到CSV时发生未知错误: {e}", exc_info=True)
-            QMessageBox.critical(self, "导出失败", f"导出日志时发生意外错误: {e}")
+            if not auto_export_path_str:
+                QMessageBox.critical(self, "导出失败", f"导出日志时发生意外错误: {e}")
+
+    def export_buffered_logs_for_automation(self, file_path_or_dir: str, filter_override: dict = None):
+        """
+        Exports logs directly from the all_log_entries_buffer, bypassing UI table visibility.
+        Allows for optional filter overrides for automation purposes.
+        If filter_override is None, all buffered logs are exported.
+        The file_path_or_dir argument can be a directory (a timestamped CSV will be created inside) 
+        or a full file path.
+        """
+        logger.info(f"Automated CSV export (from buffer) initiated for path/directory: {file_path_or_dir}")
+        logger.info(f"Automated CSV export: Buffer size at start: {len(self.all_log_entries_buffer)}") # 新增日志
+        if filter_override: # 新增日志
+            logger.info(f"Automated CSV export: Applying filter override: {filter_override}")
+
+        _actual_file_path: str
+        if os.path.isdir(file_path_or_dir):
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            # Use a slightly different name for generated files to distinguish from other export functions
+            filename = f"buffered_auto_export_{timestamp}.csv"
+            _actual_file_path = os.path.join(file_path_or_dir, filename)
+            logger.info(f"Provided path '{file_path_or_dir}' is a directory. Actual export file path: {_actual_file_path}")
+        else:
+            _actual_file_path = file_path_or_dir
+            logger.info(f"Provided path '{file_path_or_dir}' is treated as a full file path. Actual export file path: {_actual_file_path}")
+
+        # Ensure the parent directory for _actual_file_path exists
+        try:
+            export_dir = os.path.dirname(_actual_file_path)
+            if export_dir: # handles case where _actual_file_path is just a filename (dir is '')
+                os.makedirs(export_dir, exist_ok=True)
+        except Exception as e:
+            msg = f"无法创建导出目录: {os.path.dirname(_actual_file_path)}\n错误: {e}"
+            QMessageBox.critical(self, "导出失败", msg)
+            logger.error(f"Automated CSV export (from buffer): Failed to create directory for '{_actual_file_path}'. {msg}", exc_info=True)
+            return
+
+        if not self.all_log_entries_buffer:
+            logger.info(f"Automated CSV export (from buffer): No log entries in buffer to export to {_actual_file_path}.")
+            # Optionally create an empty CSV with headers or just do nothing
+            try:
+                with open(_actual_file_path, 'w', newline='', encoding='utf-8') as csvfile: # Use _actual_file_path
+                    writer = csv.writer(csvfile)
+                    # Write headers (same as your other export)
+                    headers = ["Timestamp", "Log Type", "Source IP", "Source Port", 
+                               "Destination IP", "Destination Port", "Protocol", "Action", 
+                               "Size (Bytes)", "Details/Reason"] # Adjust if needed
+                    writer.writerow(headers)
+                logger.info(f"Automated CSV export (from buffer): Empty CSV with headers created at {_actual_file_path} as buffer was empty.")
+            except Exception as e:
+                # Use QMessageBox as this function might be called in a context where UI is available (e.g. closeEvent)
+                QMessageBox.critical(self, "导出失败", f"创建空的CSV文件失败: {_actual_file_path}\n错误: {e}")
+                logger.error(f"Automated CSV export (from buffer): Error creating empty CSV at {_actual_file_path}: {e}", exc_info=True)
+            return
+
+        # Determine effective filters
+        effective_filters = self.current_filters.copy()
+        if filter_override is not None:
+            effective_filters.update(filter_override)
+        else:
+            effective_filters = {
+                'src_ip': '', 'dst_ip': '', 'src_port': '', 'dst_port': '',
+                'protocol': 'All', 'action': 'All'
+            }
+        
+        original_filters = self.current_filters
+        self.current_filters = effective_filters
+
+        try:
+            with open(_actual_file_path, 'w', newline='', encoding='utf-8') as csvfile: # Use _actual_file_path
+                writer = csv.writer(csvfile)
+                headers = ["Timestamp", "Log Type", "Source IP", "Source Port", 
+                           "Destination IP", "Destination Port", "Protocol", "Action", 
+                           "Size (Bytes)", "Details/Reason"] # Adjust if your dict keys are different
+                writer.writerow(headers)
+
+                exported_count = 0
+                matched_filter_count = 0 # 新增计数器
+                for log_entry_dict in self.all_log_entries_buffer:
+                    if self._matches_filters(log_entry_dict):
+                        matched_filter_count += 1 # 增加匹配计数
+                        row_data = []
+                        # Extract data according to headers from log_entry_dict
+                        # This needs careful mapping based on your log_entry_dict structure
+                        row_data.append(log_entry_dict.get('timestamp', ''))
+                        row_data.append(log_entry_dict.get('log_type', 'general'))
+                        
+                        packet_info = log_entry_dict.get('packet_info', {})
+                        row_data.append(str(packet_info.get('src_addr', '')))
+                        row_data.append(str(packet_info.get('src_port', '')))
+                        row_data.append(str(packet_info.get('dst_addr', '')))
+                        row_data.append(str(packet_info.get('dst_port', '')))
+                        row_data.append(str(packet_info.get('protocol', '')))
+                        row_data.append(str(packet_info.get('action', '')))
+                        row_data.append(str(packet_info.get('size', ''))) # Ensure this key matches your packet_info structure for size
+                        # Check for reason_details first, then reason, then message for broader compatibility
+                        details_or_reason = packet_info.get('reason_details', packet_info.get('reason', log_entry_dict.get('message', '')))
+                        row_data.append(str(details_or_reason))
+                        
+                        writer.writerow(row_data)
+                        exported_count +=1
+                
+                logger.info(f"Automated CSV export: Total entries in buffer: {len(self.all_log_entries_buffer)}, Matched filter: {matched_filter_count}, Exported: {exported_count}") # 新增详细日志
+
+                if exported_count > 0:
+                    QMessageBox.information(self, "导出成功", f"已将 {exported_count} 条日志导出到: {_actual_file_path}")
+                    logger.info(f"Automated CSV export (from buffer): Successfully exported {exported_count} log entries to {_actual_file_path}")
+                else:
+                    # This case means buffer had entries, but none matched the automation filters
+                    logger.info(f"Automated CSV export (from buffer): Buffer was not empty, but no log entries matched automation filters. Exported 0 entries to {_actual_file_path} (headers only).")
+                    QMessageBox.warning(self, "导出注意", f"日志缓冲区中有条目，但没有条目匹配自动化导出过滤器。已在 {_actual_file_path} 创建CSV（仅表头）。")
+
+
+        except Exception as e:
+            QMessageBox.critical(self, "导出失败", f"导出日志到CSV失败: {_actual_file_path}\n错误: {e}")
+            logger.error(f"Automated CSV export (from buffer): Failed to export logs to {_actual_file_path}: {e}", exc_info=True)
+        finally:
+            self.current_filters = original_filters # Restore original filters

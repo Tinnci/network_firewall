@@ -31,7 +31,7 @@ class MainWindow(QMainWindow):
     # Define signals to safely update UI from other threads
     log_entry_received = pyqtSignal(dict)
     traffic_packet_received = pyqtSignal(dict)
-    rules_ui_updated_signal = pyqtSignal() # New signal for rule UI updates
+    # rules_ui_updated_signal = pyqtSignal() # New signal for rule UI updates
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -106,6 +106,9 @@ class MainWindow(QMainWindow):
 
         # Connect the UI-safe traffic signal to the TrafficMonitorTab slot
         self.traffic_packet_received.connect(self.traffic_monitor_tab.add_packet)
+
+        # Connect the rules updated signal from Firewall core to the UI update method
+        self.firewall.rules_updated_signal.connect(self._update_rule_lists)
 
         # --- Tab Signals ---
         # IP Filter Tab signals
@@ -312,7 +315,7 @@ class MainWindow(QMainWindow):
                  self.performance_tab.update_performance_stats({}, {}) # Clear performance tab
             
             # Update rule lists in relevant tabs
-            self._update_rule_lists() 
+            # self._update_rule_lists() 
         except Exception as e:
             print(f"更新状态时出错: {e}")
             logger.error(f"Error in UI update status: {e}", exc_info=True) 
@@ -380,7 +383,7 @@ class MainWindow(QMainWindow):
             self.ip_filter_tab.update_lists(rules.get('ip_blacklist', set()), rules.get('ip_whitelist', set()))
             self.port_filter_tab.update_lists(rules.get('port_blacklist', set()), rules.get('port_whitelist', set()))
             self.content_filter_tab.update_list(rules.get('content_filters', []))
-            self.rules_ui_updated_signal.emit() # Emit signal after all tab updates are called
+            # self.rules_ui_updated_signal.emit() # Emit signal after all tab updates are called
         except Exception as e:
              logger.error(f"Error updating rule lists in UI: {e}", exc_info=True) 
 
@@ -486,13 +489,47 @@ class MainWindow(QMainWindow):
 
     # --- Window Close Event ---
     def closeEvent(self, event):
-        """窗口关闭事件"""
+        """处理关闭事件，确保防火墙停止"""
         logger.info("Close event received. Stopping firewall...")
-        if self.firewall.is_running:
+        # Stop UI timers first to prevent them from firing during/after core shutdown
+        try:
+            if self.update_timer.isActive():
+                self.update_timer.stop()
+                logger.info("UI Timers stopped.")
+                # Removed traffic_timer stop
+        except Exception as e:
+            logger.error(f"Error stopping UI timers: {e}")
+
+        # Check for automated CSV export environment variable
+        auto_export_path_env = os.getenv('FIREWALL_AUTO_EXPORT_CSV_PATH')
+        if auto_export_path_env:
+            logger.info(f"FIREWALL_AUTO_EXPORT_CSV_PATH is set to '{auto_export_path_env}'. Triggering CSV export on close.")
+            try:
+                if hasattr(self.log_tab, 'export_buffered_logs_for_automation'):
+                    # Define filters to export only intercepted logs, ignoring other UI filter states for automation
+                    automation_filters = {
+                        'action': '拦截', # Only intercepted logs
+                        'protocol': 'All',    # All protocols
+                        'src_ip': '',         # No source IP filter
+                        'dst_ip': '',         # No destination IP filter
+                        'src_port': '',       # No source port filter
+                        'dst_port': ''        # No destination port filter
+                    }
+                    self.log_tab.export_buffered_logs_for_automation(auto_export_path_env, filter_override=automation_filters)
+                    logger.info(f"Automated CSV export (from buffer, action: 拦截) initiated from MainWindow.closeEvent to {auto_export_path_env}.")
+                else:
+                    logger.warning("LogTab does not have 'export_buffered_logs_for_automation' method. Automated CSV export cannot proceed as intended.")
+                    # Fallback or error logging if the intended method is not available.
+                    # Depending on requirements, you might attempt the old method or simply log that the specific export failed.
+                    # For now, just log the warning. If _export_filtered_logs_to_csv were to be called here,
+                    # it would still likely result in "no visible entries".
+
+            except Exception as e:
+                logger.error(f"Error during automated CSV export from MainWindow.closeEvent: {e}", exc_info=True)
+        
+        if self.firewall:
             self.firewall.stop()
-        self.update_timer.stop()
-        # Removed self.traffic_timer.stop()
-        logger.info("UI Timers stopped.")
-        event.accept()
+            logger.info("Firewall stopped from MainWindow.closeEvent.")
+        
         logger.info("Exiting application.")
-        QApplication.quit()
+        event.accept()

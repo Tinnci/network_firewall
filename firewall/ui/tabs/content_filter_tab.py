@@ -9,12 +9,14 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal
 
+# Import the utility function
+from ..ui_utils import update_list_widget_content
+
 class ContentFilterTab(QWidget):
     """内容过滤标签页的UI和基本交互"""
     # Signals to request actions from the main window
     add_filter_requested = pyqtSignal(str)
     remove_filter_requested = pyqtSignal(str)
-    list_updated_signal = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,34 +65,8 @@ class ContentFilterTab(QWidget):
     # --- Public Methods for UI Update ---
     def update_list(self, filter_items: List[str]):
         """更新内容过滤规则列表显示"""
-        self._update_list_widget(self.content_filter_list, filter_items)
-        self.list_updated_signal.emit()
+        update_list_widget_content(self.content_filter_list, filter_items)
 
     def clear_input(self):
         """清空输入框"""
         self.content_filter_input.clear()
-
-    def _update_list_widget(self, list_widget: QListWidget, items: List[str]):
-        """高效地更新列表控件内容"""
-        # Copied from IpFilterTab, consider moving to a UI utility
-        try: 
-            current_items_text = {list_widget.item(i).text() for i in range(list_widget.count())}
-            # Convert list to set for efficient comparison
-            new_items_text = set(items) 
-
-            items_to_add = new_items_text - current_items_text
-            items_to_remove = current_items_text - new_items_text
-
-            if items_to_remove:
-                rows_to_remove = []
-                for i in range(list_widget.count()):
-                     try: 
-                         if list_widget.item(i).text() in items_to_remove:
-                             rows_to_remove.append(i)
-                     except AttributeError: pass 
-                for i in sorted(rows_to_remove, reverse=True):
-                    list_widget.takeItem(i)
-            if items_to_add:
-                list_widget.addItems(sorted(list(items_to_add))) 
-        except Exception as e:
-             print(f"Error updating Content Filter list widget '{list_widget.objectName()}': {e}")

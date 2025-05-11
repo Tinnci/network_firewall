@@ -1,6 +1,6 @@
 import re
 import os
-from typing import List, Optional
+from typing import List
 import time
 import logging # Added for log_marker
 
@@ -8,18 +8,67 @@ import logging # Added for log_marker
 LOG_FILE_PATH = 'logs/firewall.log'
 logger = logging.getLogger("log_parser_helper") # Logger for this helper
 
+# --- 新增：文件操作辅助函数与重试逻辑 ---
+MAX_FILE_ACCESS_RETRIES = 5
+FILE_ACCESS_RETRY_DELAY = 0.2 # seconds
+
+def _open_log_file_with_retry(mode='r', encoding='utf-8'):
+    """尝试以重试方式打开日志文件。"""
+    last_exception = None
+    for attempt in range(MAX_FILE_ACCESS_RETRIES):
+        try:
+            return open(LOG_FILE_PATH, mode, encoding=encoding)
+        except (IOError, PermissionError) as e:
+            last_exception = e
+            # logger.debug(f"LogParser: Attempt {attempt + 1} to open {LOG_FILE_PATH} in mode '{mode}' failed: {e}. Retrying in {FILE_ACCESS_RETRY_DELAY}s...")
+            time.sleep(FILE_ACCESS_RETRY_DELAY)
+    if last_exception:
+        # logger.error(f"LogParser: Failed to open {LOG_FILE_PATH} in mode '{mode}' after {MAX_FILE_ACCESS_RETRIES} attempts. Last error: {last_exception}")
+        raise last_exception # Re-raise the last encountered exception
+    return None # Should not be reached if MAX_FILE_ACCESS_RETRIES > 0
+
+def _read_log_lines_with_retry() -> List[str]:
+    """尝试以重试方式读取日志文件的所有行。"""
+    last_exception = None
+    if not os.path.exists(LOG_FILE_PATH):
+        # logger.warning(f"LogParser: Log file {LOG_FILE_PATH} does not exist during read attempt.")
+        return []
+        
+    for attempt in range(MAX_FILE_ACCESS_RETRIES):
+        try:
+            with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f:
+                return f.readlines()
+        except (IOError, PermissionError, FileNotFoundError) as e: # Added FileNotFoundError here too
+            last_exception = e
+            # logger.debug(f"LogParser: Attempt {attempt + 1} to read {LOG_FILE_PATH} failed: {e}. Retrying in {FILE_ACCESS_RETRY_DELAY}s...")
+            if isinstance(e, FileNotFoundError): # If file not found mid-operation, maybe it was just cleared/rotated
+                if attempt < MAX_FILE_ACCESS_RETRIES -1: # Only retry if not the last attempt
+                    time.sleep(FILE_ACCESS_RETRY_DELAY)
+                    continue 
+                else: # If it's the last attempt and still not found, treat as empty or error
+                    break 
+            time.sleep(FILE_ACCESS_RETRY_DELAY)
+
+    if last_exception:
+        logger.error(f"LogParser: Failed to read {LOG_FILE_PATH} after {MAX_FILE_ACCESS_RETRIES} attempts. Last error: {last_exception}")
+        # Depending on strictness, could raise last_exception or return empty list
+    return []
+
 def log_marker(marker_text: str):
     """向主日志文件写入一个标记行。"""
     try:
         # 使用项目统一的日志配置，或者一个简单的文件写入
         # 为了确保它能被pytest捕获，并且与防火墙日志在同一个文件，直接写入比较简单
-        with open(LOG_FILE_PATH, 'a', encoding='utf-8') as f:
-            # 使用更明显的格式，并包含时间戳，使其像普通日志条目
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-            f.write(f"{timestamp},{int(time.time()*1000)%1000:03d} - MARKER - INFO - {marker_text}\\n")
+        # Appending is generally less prone to conflicts than writing ('w')
+        with _open_log_file_with_retry(mode='a') as f:
+            if f:
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                f.write(f"{timestamp},{int(time.time()*1000)%1000:03d} - MARKER - INFO - {marker_text}\\n")
+            else:
+                print(f"LogParser: Failed to open log file for marker after retries: {marker_text}")
         # logger.info(marker_text) # This would go to console if logger is configured for that
     except Exception as e:
-        print(f"写入日志标记 '{marker_text}' 到 {LOG_FILE_PATH} 失败: {e}")
+        print(f"写入日志标记 '{marker_text}' 到 {LOG_FILE_PATH} 失败 (even with retries): {e}")
 
 def find_log_entries(pattern: str, max_lines_to_check: int = 4000) -> List[str]:
     """
@@ -31,20 +80,23 @@ def find_log_entries(pattern: str, max_lines_to_check: int = 4000) -> List[str]:
         匹配的日志条目列表.
     """
     matched_entries = []
-    if not os.path.exists(LOG_FILE_PATH):
-        print(f"日志文件未找到: {LOG_FILE_PATH}")
-        return matched_entries
+    # if not os.path.exists(LOG_FILE_PATH): # Handled by _read_log_lines_with_retry
+    #     print(f"日志文件未找到: {LOG_FILE_PATH}")
+    #     return matched_entries
 
     try:
-        with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f:
+        # with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f: # Replaced with retry logic
             # 读取所有行，然后取最后N行
             # 对于非常大的日志文件，可以考虑更优化的逐行倒读方式
-            lines = f.readlines()
-            lines_to_check = lines[-max_lines_to_check:]
-            for line in reversed(lines_to_check): # 从最新的日志开始检查通常更有效率
-                if re.search(pattern, line, re.IGNORECASE):
-                    matched_entries.append(line.strip())
-            matched_entries.reverse() # 保持原始顺序（如果需要）
+        lines = _read_log_lines_with_retry()
+        if not lines: # If read failed or file is empty
+            return matched_entries
+            
+        lines_to_check = lines[-max_lines_to_check:]
+        for line in reversed(lines_to_check): # 从最新的日志开始检查通常更有效率
+            if re.search(pattern, line, re.IGNORECASE):
+                matched_entries.append(line.strip())
+        matched_entries.reverse() # 保持原始顺序（如果需要）
     except Exception as e:
         print(f"解析日志文件时出错: {e}")
     return matched_entries
@@ -61,20 +113,23 @@ def find_log_entries_after_marker(pattern: str, marker: str, max_lines_to_check:
     """
     matched_entries = []
     found_marker = False
-    if not os.path.exists(LOG_FILE_PATH):
-        print(f"日志文件未找到: {LOG_FILE_PATH}")
-        return matched_entries
+    # if not os.path.exists(LOG_FILE_PATH): # Handled by _read_log_lines_with_retry
+    #     print(f"日志文件未找到: {LOG_FILE_PATH}")
+    #     return matched_entries
 
     try:
-        with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            lines_to_check = lines[-max_lines_to_check:]
-            for line in lines_to_check:
-                if not found_marker and marker in line:
-                    found_marker = True
-                    continue
-                if found_marker and re.search(pattern, line, re.IGNORECASE):
-                    matched_entries.append(line.strip())
+        # with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f: # Replaced
+        lines = _read_log_lines_with_retry()
+        if not lines:
+            return matched_entries
+            
+        lines_to_check = lines[-max_lines_to_check:]
+        for line in lines_to_check:
+            if not found_marker and marker in line:
+                found_marker = True
+                continue
+            if found_marker and re.search(pattern, line, re.IGNORECASE):
+                matched_entries.append(line.strip())
     except Exception as e:
         print(f"解析日志文件时出错: {e}")
     return matched_entries
@@ -82,19 +137,22 @@ def find_log_entries_after_marker(pattern: str, marker: str, max_lines_to_check:
 def count_all_log_entries(pattern: str) -> int:
     """扫描整个日志文件，计算匹配给定正则表达式模式的条目总数。"""
     count = 0
-    if not os.path.exists(LOG_FILE_PATH):
-        print(f"日志文件不存在: {LOG_FILE_PATH}")
-        return 0
+    # if not os.path.exists(LOG_FILE_PATH): # Handled by _read_log_lines_with_retry
+    #     print(f"日志文件不存在: {LOG_FILE_PATH}")
+    #     return 0
     try:
-        with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f:
-            for line in f:
-                if re.search(pattern, line):
-                    count += 1
-    except FileNotFoundError:
-        print(f"打开日志文件时未找到 (可能在计数过程中被删除): {LOG_FILE_PATH}")
-        return 0 # Or raise error depending on desired strictness
+        # with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f: # Replaced
+        lines = _read_log_lines_with_retry()
+        if not lines:
+            return 0
+        for line in lines:
+            if re.search(pattern, line):
+                count += 1
+    # except FileNotFoundError: # Covered by retry logic / _read_log_lines_with_retry returning empty
+    #     print(f"打开日志文件时未找到 (可能在计数过程中被删除): {LOG_FILE_PATH}")
+    #     return 0 
     except Exception as e:
-        print(f"读取或解析日志文件 {LOG_FILE_PATH} 时出错: {e}")
+        print(f"读取或解析日志文件 {LOG_FILE_PATH} 时出错 (after retries): {e}")
     return count
 
 def count_log_entries_after_last_marker(pattern_to_count: str, marker_pattern: str) -> int:
@@ -106,14 +164,19 @@ def count_log_entries_after_last_marker(pattern_to_count: str, marker_pattern: s
     count = 0
     last_marker_line_num = -1
 
-    if not os.path.exists(LOG_FILE_PATH):
-        print(f"日志文件不存在: {LOG_FILE_PATH}")
-        return 0
+    # if not os.path.exists(LOG_FILE_PATH): # Handled by _read_log_lines_with_retry
+    #     print(f"日志文件不存在: {LOG_FILE_PATH}")
+    #     return 0
 
     try:
-        with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-
+        # with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f: # Replaced
+        #     lines = f.readlines()
+        lines = _read_log_lines_with_retry()
+        if not lines:
+            if last_marker_line_num == -1: # Check moved here
+                 print(f"警告: 在 {LOG_FILE_PATH} 中未找到标记 '{marker_pattern}' (且日志无法读取或为空)。已从头计数 '{pattern_to_count}' 结果为0。")
+            return 0
+        
         # 1. 找到最后一个标记的位置 (从后向前搜索效率更高)
         for i in range(len(lines) - 1, -1, -1):
             if re.search(marker_pattern, lines[i]):
@@ -134,35 +197,37 @@ def count_log_entries_after_last_marker(pattern_to_count: str, marker_pattern: s
         print(f"打开日志文件时未找到: {LOG_FILE_PATH}")
         return 0
     except Exception as e:
-        print(f"读取或解析日志文件 {LOG_FILE_PATH} 时出错: {e}")
+        print(f"读取或解析日志文件 {LOG_FILE_PATH} 时出错 (after retries): {e}")
     return count
 
 def clear_log_file():
     """清空日志文件内容，如果文件不存在则创建它。"""
-    if not os.path.exists(os.path.dirname(LOG_FILE_PATH)):
+    # Ensure directory exists (this part is fine as it's usually a one-off)
+    log_dir = os.path.dirname(LOG_FILE_PATH)
+    if log_dir and not os.path.exists(log_dir): # Check if log_dir is not empty
         try:
-            os.makedirs(os.path.dirname(LOG_FILE_PATH))
-            print(f"日志目录已创建: {os.path.dirname(LOG_FILE_PATH)}")
+            os.makedirs(log_dir)
+            print(f"日志目录已创建: {log_dir}")
         except Exception as e:
             print(f"创建日志目录失败: {e}")
-            # 如果目录创建失败，后续打开文件可能也会失败，但还是尝试一下
+            # If directory creation fails, subsequent file operations will likely fail
 
-    if os.path.exists(LOG_FILE_PATH):
+    # Attempt to clear the file with retry
+    last_exception = None
+    for attempt in range(MAX_FILE_ACCESS_RETRIES):
         try:
             with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
                 f.write("") # 写入空字符串以清空
+            # logger.info(f"LogParser: Log file {LOG_FILE_PATH} cleared on attempt {attempt + 1}.")
             print(f"日志文件已清空: {LOG_FILE_PATH}")
-        except Exception as e:
-            print(f"清空日志文件失败: {e}")
-    else:
-        # 如果日志文件不存在，也打印一条消息，因为测试可能期望它被创建和清空
-        print(f"日志文件 {LOG_FILE_PATH} 不存在，将被视为空白。尝试创建空日志文件。")
-        try:
-            with open(LOG_FILE_PATH, 'w', encoding='utf-8') as f:
-                f.write("")
-            print(f"已创建空的日志文件: {LOG_FILE_PATH}")
-        except Exception as e:
-            print(f"创建空日志文件失败: {e}")
+            return # Success
+        except (IOError, PermissionError) as e:
+            last_exception = e
+            # logger.debug(f"LogParser: Attempt {attempt + 1} to clear {LOG_FILE_PATH} failed: {e}. Retrying...")
+            time.sleep(FILE_ACCESS_RETRY_DELAY)
+            
+    if last_exception:
+        print(f"清空日志文件失败 (after {MAX_FILE_ACCESS_RETRIES} retries): {LOG_FILE_PATH}, Error: {last_exception}")
 
 def wait_for_log_entry(pattern: str, timeout_seconds: int, max_lines_to_check: int = 4000, check_interval: float = 0.2) -> bool:
     """
@@ -178,29 +243,30 @@ def wait_for_log_entry(pattern: str, timeout_seconds: int, max_lines_to_check: i
         bool: 如果在超时时间内找到匹配的条目则返回 True，否则返回 False。
     """
     start_time = time.time()
-    if not os.path.exists(LOG_FILE_PATH):
-        print(f"日志文件在 wait_for_log_entry 开始时未找到: {LOG_FILE_PATH}")
-        # 等待文件被创建
-        while not os.path.exists(LOG_FILE_PATH) and (time.time() - start_time) < timeout_seconds:
-            time.sleep(check_interval)
-        if not os.path.exists(LOG_FILE_PATH):
-            print(f"日志文件在 {timeout_seconds} 秒内未创建: {LOG_FILE_PATH}")
-            return False
+    # Initial check for log file existence can also use a small wait
+    # if not os.path.exists(LOG_FILE_PATH):
+    #     logger.warning(f"LogParser: Log file {LOG_FILE_PATH} does not exist at start of wait_for_log_entry.")
+        # Wait for file to be created, but _read_log_lines_with_retry handles this internally now.
 
     while (time.time() - start_time) < timeout_seconds:
         try:
-            with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-                lines_to_check = lines[-max_lines_to_check:]
-                for line in reversed(lines_to_check): # 从新到旧检查
-                    if re.search(pattern, line):
-                        print(f"wait_for_log_entry: 找到匹配 '{pattern}' 的日志: {line.strip()}")
-                        return True
+            # with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f: # Replaced
+            #     lines = f.readlines()
+            lines = _read_log_lines_with_retry() # This now handles retries and initial existence
+            if not lines and (time.time() - start_time) < timeout_seconds: # File might be temporarily empty or unreadable
+                time.sleep(check_interval)
+                continue
+
+            lines_to_check = lines[-max_lines_to_check:]
+            for line in reversed(lines_to_check): # 从新到旧检查
+                if re.search(pattern, line):
+                    print(f"wait_for_log_entry: 找到匹配 '{pattern}' 的日志: {line.strip()}")
+                    return True
         except FileNotFoundError:
             # 文件可能在检查间隙被删除和重建
             print(f"wait_for_log_entry: 尝试读取时日志文件未找到: {LOG_FILE_PATH}")
-        except Exception as e:
-            print(f"wait_for_log_entry: 解析日志文件时出错: {e}")
+        except Exception as e: # Catch broader exceptions if _read_log_lines_with_retry raises something unexpected
+            print(f"wait_for_log_entry: 解析日志文件时出错 (after retries in read): {e}")
         
         time.sleep(check_interval)
     

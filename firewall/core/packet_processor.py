@@ -136,26 +136,26 @@ class PacketProcessor:
              pass # Placeholder
 
         # Analyze the packet
-        should_pass = self.analyzer.should_pass(packet)
+        should_pass, reason_str = self.analyzer.should_pass(packet)
 
         # Process based on queue model setting
         if self.settings.get('use_queue_model', False):
             try:
-                self.packet_queue.put((packet, should_pass), block=False)
+                self.packet_queue.put((packet, should_pass, reason_str), block=False)
             except queue.Full:
                 logger.warning("Packet processing queue is full. Processing directly.")
-                self._process_action(packet, should_pass)
+                self._process_action(packet, should_pass, reason_str)
         else:
             # Process directly in the interceptor's thread
-            self._process_action(packet, should_pass)
+            self._process_action(packet, should_pass, reason_str)
 
     def _worker_loop(self):
         """工作线程循环，处理队列中的数据包"""
         logger.debug(f"Worker thread started: {threading.current_thread().name}")
         while self.running:
             try:
-                packet, should_pass = self.packet_queue.get(timeout=0.5)
-                self._process_action(packet, should_pass)
+                packet, should_pass, reason_str = self.packet_queue.get(timeout=0.5)
+                self._process_action(packet, should_pass, reason_str)
                 self.packet_queue.task_done()
             except queue.Empty:
                 continue # Continue waiting if queue is empty
@@ -165,22 +165,27 @@ class PacketProcessor:
                  time.sleep(0.1)
         logger.debug(f"Worker thread finished: {threading.current_thread().name}")
 
-    def _process_action(self, packet: pydivert.Packet, should_pass: bool):
+    def _process_action(self, packet: pydivert.Packet, should_pass: bool, reason_details: str):
         """执行数据包的最终动作（发送或丢弃）并更新统计"""
         self.stats["total_processed"] += 1
         self.stats["last_packet_time"] = time.time()
+        
         packet_info_full = self.analyzer.get_packet_info(packet) # Get full info
-        reason_for_action = packet_info_full.get('reason', 'N/A') if not should_pass else "符合放行条件"
+        packet_info_full['action'] = "放行" if should_pass else "拦截"
+        packet_info_full['reason_details'] = reason_details # Store the reason
+
+        # The reason_for_action for logging message can be simplified as it's now in reason_details
+        reason_for_logging_msg = reason_details 
 
         try:
             if should_pass:
                 # Attempt to send the packet safely
-                logger.debug(f"决定放行: 源={packet_info_full['src_addr']}:{packet_info_full['src_port']}, 目标={packet_info_full['dst_addr']}:{packet_info_full['dst_port']}, 协议={packet_info_full['protocol']}", extra={'log_type': 'packet', 'packet_info': {**packet_info_full, 'action': '放行', 'reason': reason_for_action}})
+                logger.debug(f"决定放行: 源={packet_info_full['src_addr']}:{packet_info_full['src_port']}, 目标={packet_info_full['dst_addr']}:{packet_info_full['dst_port']}, 协议={packet_info_full['protocol']}, 原因: {reason_for_logging_msg}", extra={'log_type': 'packet', 'packet_info': packet_info_full})
                 self._send_packet_safe(packet)
                 self.stats["passed"] += 1
             else:
                 # Just update stats for dropped packets
-                logger.info(f"决定拦截: 源={packet_info_full['src_addr']}:{packet_info_full['src_port']}, 目标={packet_info_full['dst_addr']}:{packet_info_full['dst_port']}, 协议={packet_info_full['protocol']}, 原因: {reason_for_action}", extra={'log_type': 'packet', 'packet_info': {**packet_info_full, 'action': '拦截', 'reason': reason_for_action}})
+                logger.info(f"决定拦截: 源={packet_info_full['src_addr']}:{packet_info_full['src_port']}, 目标={packet_info_full['dst_addr']}:{packet_info_full['dst_port']}, 协议={packet_info_full['protocol']}, 原因: {reason_for_logging_msg}", extra={'log_type': 'packet', 'packet_info': packet_info_full})
                 self.stats["dropped"] += 1
 
             # Trigger external callback after action is taken (or decided)
@@ -192,9 +197,8 @@ class PacketProcessor:
 
         except Exception as e:
             self.stats["errors"] += 1
-            # logger.error(f"Failed to process packet action ({action_taken}): {e}")
             action_taken_for_log = "放行" if should_pass else "拦截"
-            logger.error(f"Failed to process packet action ({action_taken_for_log}): {e}")
+            logger.error(f"Failed to process packet action ({action_taken_for_log}): {e}", exc_info=True)
             # Optionally trigger error callback here too
             # if self.error_callback: self.error_callback(e)
 
@@ -280,36 +284,3 @@ class PacketProcessor:
         if self.settings.get('use_queue_model', False):
              current_stats["queue_size"] = self.packet_queue.qsize()
         return current_stats
-
-# Example usage:
-# if __name__ == "__main__":
-#     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    
-#     interceptor = PacketInterceptor()
-#     analyzer = PacketAnalyzer()
-#     processor = PacketProcessor(interceptor, analyzer)
-
-#     def log_processed_packet(info, passed):
-#         action = "Passed" if passed else "Dropped"
-#         print(f"Processed: {action} - {info['src_addr']}:{info['src_port']} -> {info['dst_addr']}:{info['dst_port']}")
-
-#     processor.register_processed_packet_callback(log_processed_packet)
-    
-#     # Set some rules/settings for analyzer
-#     analyzer.set_rules({'ip_blacklist': {'1.1.1.1'}})
-#     processor.set_settings({'use_queue_model': False}) # Use direct processing for simplicity
-
-#     if interceptor.start():
-#         processor.start()
-#         print("Interceptor and Processor started. Press Ctrl+C to stop.")
-#         try:
-#             while True:
-#                 time.sleep(1)
-#                 print(f"Stats: {processor.get_stats()}")
-#         except KeyboardInterrupt:
-#             print("Stopping...")
-#             processor.stop()
-#             interceptor.stop()
-#             print("Stopped.")
-#     else:
-#         print("Failed to start interceptor.")

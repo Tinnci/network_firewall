@@ -80,7 +80,6 @@ class AdvancedSettingsTab(QWidget):
     def _setting_changed(self, key: str, value: Any):
         """当UI控件值改变时，更新本地存储的设置字典"""
         self.current_settings[key] = value
-        # print(f"Setting changed: {key} = {value}") # For debugging
 
     # --- Public Methods for UI Update ---
     def load_settings(self, settings: Dict[str, Any]):

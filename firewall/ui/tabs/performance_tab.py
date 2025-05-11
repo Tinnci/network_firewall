@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import logging
 from typing import Dict
 
 from PyQt6.QtWidgets import (
@@ -8,6 +9,8 @@ from PyQt6.QtWidgets import (
     QTextEdit
 )
 from PyQt6.QtCore import pyqtSignal
+
+logger = logging.getLogger(__name__) 
 
 class PerformanceTab(QWidget):
     """性能监控标签页的UI和更新逻辑"""
@@ -60,7 +63,7 @@ class PerformanceTab(QWidget):
         diagnosis_layout = QVBoxLayout(diagnosis_group)
         self.diagnosis_text = QTextEdit()
         self.diagnosis_text.setReadOnly(True)
-        self.diagnosis_text.setPlaceholderText("点击“获取详细统计”按钮查看...")
+        self.diagnosis_text.setPlaceholderText("点击‘获取详细统计’按钮查看...")
         diagnosis_layout.addWidget(self.diagnosis_text)
         diagnosis_button = QPushButton("获取详细统计") 
         diagnosis_button.clicked.connect(self.run_diagnosis_requested) # Emit signal
@@ -106,7 +109,7 @@ class PerformanceTab(QWidget):
             self.resource_network_out.setText(f"{bytes_sent_kb:.2f} KB") 
             
         except Exception as e:
-            print(f"Error updating performance tab UI: {e}") # Use print or logger if available
+            logger.warning(f"Error updating performance tab UI: {e}")
 
     def display_diagnosis_results(self, text: str):
         """显示诊断或详细统计结果"""

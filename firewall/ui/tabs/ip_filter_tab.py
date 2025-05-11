@@ -9,6 +9,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal
 
+# Import the utility function
+from ..ui_utils import update_list_widget_content
+
 class IpFilterTab(QWidget):
     """IP过滤标签页的UI和基本交互"""
     # Signals to request actions from the main window
@@ -18,8 +21,6 @@ class IpFilterTab(QWidget):
     remove_whitelist_requested = pyqtSignal(str)
     import_list_requested = pyqtSignal(str) # list_type: 'blacklist' or 'whitelist'
     export_list_requested = pyqtSignal(str) # list_type: 'blacklist' or 'whitelist'
-
-    lists_updated_signal = pyqtSignal() # New signal
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -113,9 +114,8 @@ class IpFilterTab(QWidget):
     # --- Public Methods for UI Update ---
     def update_lists(self, blacklist_items: Set[str], whitelist_items: Set[str]):
         """更新黑名单和白名单列表显示"""
-        self._update_list_widget(self.bl_ip_list, blacklist_items)
-        self._update_list_widget(self.wl_ip_list, whitelist_items)
-        self.lists_updated_signal.emit() # Emit signal after updates
+        update_list_widget_content(self.bl_ip_list, blacklist_items)
+        update_list_widget_content(self.wl_ip_list, whitelist_items)
 
     def clear_blacklist_input(self):
         """清空黑名单输入框"""
@@ -124,30 +124,3 @@ class IpFilterTab(QWidget):
     def clear_whitelist_input(self):
         """清空白名单输入框"""
         self.wl_ip_input.clear()
-
-    def _update_list_widget(self, list_widget: QListWidget, items: Set[str]):
-        """高效地更新列表控件内容"""
-        # This is copied from MainWindow, could be moved to a UI utility later
-        try: 
-            current_items_text = {list_widget.item(i).text() for i in range(list_widget.count())}
-            new_items_text = items # Already a set of strings
-
-            items_to_add = new_items_text - current_items_text
-            items_to_remove = current_items_text - new_items_text
-
-            # Remove items
-            if items_to_remove:
-                rows_to_remove = []
-                for i in range(list_widget.count()):
-                     try: 
-                         if list_widget.item(i).text() in items_to_remove:
-                             rows_to_remove.append(i)
-                     except AttributeError: pass 
-                for i in sorted(rows_to_remove, reverse=True):
-                    list_widget.takeItem(i)
-            # Add new items
-            if items_to_add:
-                list_widget.addItems(sorted(list(items_to_add))) 
-        except Exception as e:
-             # Log or print error specific to this tab
-             print(f"Error updating IP list widget '{list_widget.objectName()}': {e}")
