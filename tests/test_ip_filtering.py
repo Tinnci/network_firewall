@@ -23,7 +23,7 @@ TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET = "114.114.114.114" # Public DNS in China
 def test_ip_blacklist(manage_rules): # manage_rules fixture 会自动应用
     """测试IP黑名单功能 (用例 2.1)"""
     print("\n开始测试: IP黑名单")
-    log_parser.clear_log_file() # 清空日志以便检查
+    # log_parser.clear_log_file() # Removed
 
     # 1. 设置规则：将TEST_EXTERNAL_IP_TO_BLACKLIST加入黑名单
     current_rules = rule_helper.get_default_rules()
@@ -52,7 +52,7 @@ def test_ip_blacklist(manage_rules): # manage_rules fixture 会自动应用
 def test_ip_whitelist_over_blacklist(manage_rules):
     """测试IP白名单优先于黑名单 (部分对应 用例 2.2)"""
     print("\n开始测试: IP白名单优先于黑名单")
-    log_parser.clear_log_file()
+    # log_parser.clear_log_file() # Removed
 
     # 1. 设置规则:
     #    - 将 TEST_EXTERNAL_IP_FOR_WHITELIST_TARGET 加入黑名单

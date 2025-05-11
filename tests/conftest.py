@@ -6,8 +6,7 @@ import os
 import time
 import ctypes
 import re
-from .helpers import rule_helper
-import logging
+from .helpers import rule_helper, log_parser
 
 LOG_FILE_PATH = "logs/firewall.log"
 # 根据 firewall.core.packet_interceptor 的日志，或者 main.py 中更早的、可靠的启动完成标志
@@ -15,6 +14,15 @@ LOG_FILE_PATH = "logs/firewall.log"
 # "Packet interceptor started." - 似乎是 PacketInterceptor 模块中的日志
 FIREWALL_READY_MESSAGE = r"Packet interceptor started" # 使用r""处理正则表达式特殊字符，尽管这里没有
 FIREWALL_START_TIMEOUT_SECONDS = 45 # 增加超时时间
+
+# Global or session-scoped storage for test results
+# This dictionary will store results for each test.
+_session_test_results = {}
+
+FIREWALL_START_TIMEOUT = 10 # seconds
+LOG_DIR = "logs"
+MAIN_LOG_FILE = os.path.join(LOG_DIR, "firewall.log")
+SUMMARY_LOG_FILE = os.path.join(LOG_DIR, "test_session_block_summary.log") # Define summary log file path
 
 def is_admin():
     """检查当前进程是否以管理员权限运行 (仅限Windows)"""
@@ -75,6 +83,12 @@ def pytest_sessionstart(session):
 
     # 清理日志文件，为防火墙启动的就绪检测做准备
     clear_log_file_for_startup()
+
+    # Initialize session results
+    global _session_test_results
+    _session_test_results = {}
+    print(f"Main log file {MAIN_LOG_FILE} will be cleared by clear_log_file_for_startup if it exists.")
+    print(f"Session block summary will be written to: {SUMMARY_LOG_FILE}")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -181,6 +195,49 @@ def firewall_service(request):
         else:
             os.environ['AUTO_START_FIREWALL_FOR_TESTING'] = original_auto_start_env
             print(f"Conftest: Restored AUTO_START_FIREWALL_FOR_TESTING to original value: '{original_auto_start_env}'.")
+
+    # Teardown: Log final stats and write summary
+    if _session_test_results:
+        print("\n--- Test Session Block Summary ---")
+        with open(SUMMARY_LOG_FILE, 'w', encoding='utf-8') as f:
+            f.write("Test Session Block Summary:\n")
+            f.write("=============================\n")
+            for test_name, stats in _session_test_results.items():
+                summary_line = f"{test_name}: {stats.get('blocked_packets', 0)} blocked_packets"
+                print(summary_line)
+                f.write(summary_line + "\n")
+            f.write("=============================\n")
+        print(f"Block summary saved to {SUMMARY_LOG_FILE}")
+    else:
+        print("No block stats recorded for this session.")
+        with open(SUMMARY_LOG_FILE, 'w', encoding='utf-8') as f:
+            f.write("No block stats recorded for this session.\n")
+
+    print("--- Pytest Session Finish ---")
+
+
+@pytest.fixture(scope="function", autouse=True)
+def record_test_stats(request):
+    """自动使用的fixture，在每个测试函数运行前后记录拦截的日志数量。"""
+    global _session_test_results
+    test_name = request.node.name
+    
+    # 为当前测试在日志中写入一个唯一的开始标记
+    test_start_marker = f"--- TEST START: {test_name} ---"
+    log_parser.log_marker(test_start_marker)
+    
+    yield # 测试函数在此运行
+    
+    # 新方法：计算自此测试的开始标记以来新增的拦截数量
+    blocks_this_test = log_parser.count_log_entries_after_last_marker(
+        pattern_to_count=r"拦截动作:", 
+        marker_pattern=re.escape(test_start_marker) #确保特殊字符被转义
+    )
+
+    if test_name not in _session_test_results:
+        _session_test_results[test_name] = {}
+    _session_test_results[test_name]['blocked_packets'] = blocks_this_test
+    # print(f"Stats for {test_name}: {blocks_this_test} blocked.") # Optional: print per-test immediate feedback
 
 # 现有的 manage_rules fixture 保持不变，它会在每个测试函数级别运行
 @pytest.fixture(scope="function")

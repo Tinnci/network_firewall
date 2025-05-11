@@ -1,16 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import time
-from typing import Dict, List
+from typing import Dict
 import logging
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
-    QLabel, QPushButton, QComboBox, QCheckBox, QGroupBox, QSpinBox,
-    QHeaderView, QSplitter
+    QLabel, QPushButton, QCheckBox, QGroupBox, QSpinBox,
+    QHeaderView
 )
-from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QColor, QBrush
 
 # Import config

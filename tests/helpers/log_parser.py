@@ -2,9 +2,24 @@ import re
 import os
 from typing import List, Optional
 import time
+import logging # Added for log_marker
 
 # 假设日志文件在项目根目录下的logs文件夹中
 LOG_FILE_PATH = 'logs/firewall.log'
+logger = logging.getLogger("log_parser_helper") # Logger for this helper
+
+def log_marker(marker_text: str):
+    """向主日志文件写入一个标记行。"""
+    try:
+        # 使用项目统一的日志配置，或者一个简单的文件写入
+        # 为了确保它能被pytest捕获，并且与防火墙日志在同一个文件，直接写入比较简单
+        with open(LOG_FILE_PATH, 'a', encoding='utf-8') as f:
+            # 使用更明显的格式，并包含时间戳，使其像普通日志条目
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            f.write(f"{timestamp},{int(time.time()*1000)%1000:03d} - MARKER - INFO - {marker_text}\\n")
+        # logger.info(marker_text) # This would go to console if logger is configured for that
+    except Exception as e:
+        print(f"写入日志标记 '{marker_text}' 到 {LOG_FILE_PATH} 失败: {e}")
 
 def find_log_entries(pattern: str, max_lines_to_check: int = 4000) -> List[str]:
     """
@@ -64,8 +79,66 @@ def find_log_entries_after_marker(pattern: str, marker: str, max_lines_to_check:
         print(f"解析日志文件时出错: {e}")
     return matched_entries
 
+def count_all_log_entries(pattern: str) -> int:
+    """扫描整个日志文件，计算匹配给定正则表达式模式的条目总数。"""
+    count = 0
+    if not os.path.exists(LOG_FILE_PATH):
+        print(f"日志文件不存在: {LOG_FILE_PATH}")
+        return 0
+    try:
+        with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f:
+            for line in f:
+                if re.search(pattern, line):
+                    count += 1
+    except FileNotFoundError:
+        print(f"打开日志文件时未找到 (可能在计数过程中被删除): {LOG_FILE_PATH}")
+        return 0 # Or raise error depending on desired strictness
+    except Exception as e:
+        print(f"读取或解析日志文件 {LOG_FILE_PATH} 时出错: {e}")
+    return count
+
+def count_log_entries_after_last_marker(pattern_to_count: str, marker_pattern: str) -> int:
+    """
+    计算在日志文件中最后一个匹配 marker_pattern 的标记行之后，
+    出现了多少行匹配 pattern_to_count。
+    如果未找到 marker_pattern，则从文件开头开始计数。
+    """
+    count = 0
+    last_marker_line_num = -1
+
+    if not os.path.exists(LOG_FILE_PATH):
+        print(f"日志文件不存在: {LOG_FILE_PATH}")
+        return 0
+
+    try:
+        with open(LOG_FILE_PATH, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        # 1. 找到最后一个标记的位置 (从后向前搜索效率更高)
+        for i in range(len(lines) - 1, -1, -1):
+            if re.search(marker_pattern, lines[i]):
+                last_marker_line_num = i
+                break
+        
+        # 2. 如果找到了标记，则从标记后的下一行开始计数
+        start_index = last_marker_line_num + 1 if last_marker_line_num != -1 else 0
+        
+        for i in range(start_index, len(lines)):
+            if re.search(pattern_to_count, lines[i]):
+                count += 1
+        
+        if last_marker_line_num == -1:
+            print(f"警告: 在 {LOG_FILE_PATH} 中未找到标记 '{marker_pattern}'。已从头计数 '{pattern_to_count}'。")
+
+    except FileNotFoundError:
+        print(f"打开日志文件时未找到: {LOG_FILE_PATH}")
+        return 0
+    except Exception as e:
+        print(f"读取或解析日志文件 {LOG_FILE_PATH} 时出错: {e}")
+    return count
+
 def clear_log_file():
-    """清空日志文件内容，用于测试前准备"""
+    """清空日志文件内容，如果文件不存在则创建它。"""
     if not os.path.exists(os.path.dirname(LOG_FILE_PATH)):
         try:
             os.makedirs(os.path.dirname(LOG_FILE_PATH))
