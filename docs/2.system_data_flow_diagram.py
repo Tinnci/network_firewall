@@ -5,7 +5,7 @@ def generate_system_data_flow_diagram():
     """
     生成防火墙系统数据流程图 (数据包的完整处理流程)
     """
-    dot = Digraph('Firewall_System_Data_Flow', comment='防火墙系统数据流程图', format='png')
+    dot = Digraph('Firewall_System_Data_Flow', comment='防火墙系统数据流程图', format='svg')
     dot.attr(rankdir='TB', labelloc="t", label="防火墙系统数据流程图", fontsize="20")
 
     # 设置全局字体为 "Microsoft YaHei"
@@ -66,7 +66,7 @@ def generate_system_data_flow_diagram():
 
     try:
         dot.render('firewall_system_data_flow', view=False, cleanup=True)
-        print("系统数据流程图已保存为 firewall_system_data_flow.png")
+        print("系统数据流程图已保存为 firewall_system_data_flow.svg")
     except Exception as e:
         print(f"生成系统数据流程图失败: {e}\n请确保已安装Graphviz并将其添加到系统PATH。")
 

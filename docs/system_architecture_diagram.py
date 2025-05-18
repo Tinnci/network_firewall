@@ -9,7 +9,7 @@ def generate_system_architecture_diagram():
     """
     生成防火墙系统架构图
     """
-    dot = Digraph('Firewall_System_Architecture', comment='防火墙系统架构图', format='png')
+    dot = Digraph('Firewall_System_Architecture', comment='防火墙系统架构图', format='svg')
     dot.attr(rankdir='TB', labelloc="t", label="防火墙系统架构图", fontsize="20") # TB: Top to Bottom, LR: Left to Right
 
     # 设置全局字体为 "Microsoft YaHei"
@@ -110,7 +110,7 @@ def generate_system_architecture_diagram():
     # 渲染并保存
     try:
         dot.render('firewall_system_architecture', view=False)
-        print("系统架构图已保存为 firewall_system_architecture.png")
+        print("系统架构图已保存为 firewall_system_architecture.svg")
     except Exception as e:
         print(f"生成系统架构图失败: {e}")
         print("请确保已安装Graphviz并将其添加到系统PATH。")
