@@ -5,7 +5,7 @@ def generate_packet_capture_protocol_filter_flowchart():
     """
     生成数据包捕获与协议过滤流程图
     """
-    dot = Digraph('Firewall_Packet_Capture_Protocol_Filter', comment='数据包捕获与协议过滤流程图', format='png')
+    dot = Digraph('Firewall_Packet_Capture_Protocol_Filter', comment='数据包捕获与协议过滤流程图', format='svg')
     dot.attr(rankdir='TB', labelloc="t", label="数据包捕获与协议过滤流程图", fontsize="20")
 
     # 设置全局字体为 "Microsoft YaHei"
@@ -66,7 +66,7 @@ def generate_packet_capture_protocol_filter_flowchart():
 
     try:
         dot.render('firewall_packet_capture_protocol_filter', view=False, cleanup=True)
-        print("数据包捕获与协议过滤流程图已保存为 firewall_packet_capture_protocol_filter.png")
+        print("数据包捕获与协议过滤流程图已保存为 firewall_packet_capture_protocol_filter.svg")
     except Exception as e:
         print(f"生成数据包捕获与协议过滤流程图失败: {e}\n请确保已安装Graphviz并将其添加到系统PATH。")
 

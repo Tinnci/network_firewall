@@ -25,4 +25,4 @@ build-backend = "setuptools.build_meta"
 firewall = "main:main"
 
 [tool.setuptools]
-packages = ["firewall", "firewall.core", "firewall.ui", "firewall.resources"]
+packages = ["firewall", "firewall.core", "firewall.ui"]

@@ -1,0 +1,122 @@
+digraph NetworkFirewallArchitecture {
+    rankdir=TB; // 从上到下布局
+    splines=ortho; // 使用正交线以获得更清晰的外观
+    nodesep=1.0; // 增加节点间距
+    ranksep=1.5; // 增加层级间距
+    fontsize=14; // 全局字体大小
+    fontname="Microsoft YaHei"; // 设置全局默认字体为雅黑
+    bgcolor="#F5F5F5"; // 为整个图表设置浅灰色背景
+    size="6,10"; // 建议宽度约为20厘米，高度自适应
+
+    // --- 主应用程序和配置 ---
+    node [shape=box, style="rounded,filled", fontname="Microsoft YaHei", fontsize=14]; // 节点默认字体大小
+    "main.py" [label="main.py\n(应用程序入口)", fillcolor="#CDE8FF"]; // 淡蓝色入口点
+    "config.yaml" [label="config.yaml\n(用户配置)", shape=note, fillcolor="#FFFACD"];
+    "rules.yaml" [label="rules.yaml\n(防火墙规则)", shape=note, fillcolor="#FFFACD"];
+
+    // --- 防火墙包 ---
+    subgraph cluster_firewall_package {
+        label="firewall (包)";
+        style="filled";
+        color="#D2E0BF"; // 淡雅的橄榄绿
+        fontname="Microsoft YaHei Bold"; // 集群标签也使用雅黑
+        fontsize=18; // 主集群标签字体大小
+
+        node [shape=box, style="rounded,filled", fontname="Microsoft YaHei", fontsize=14]; // 集群内节点默认字体大小
+
+        // --- UI 子包 ---
+        subgraph cluster_ui {
+            label="用户界面 (ui)";
+            style="filled";
+            color="#BDE0FE"; // 淡天蓝色
+            fontname="Microsoft YaHei Bold";
+            fontsize=16; // 子集群标签字体大小
+
+            "firewall.ui.main_window" [label="main_window.py\n(主图形界面)", fillcolor="#D8EEFE"];
+            "firewall.ui.tabs" [label="tabs/\n(界面选项卡)", shape=folder, fillcolor="#D8EEFE"];
+            "firewall.ui.ui_utils" [label="ui_utils.py\n(界面工具)", fillcolor="#D8EEFE"];
+
+             "firewall.ui.main_window" -> "firewall.ui.tabs";
+        }
+
+        // --- Core 子包 ---
+        subgraph cluster_core {
+            label="核心 (core)";
+            style="filled";
+            color="#C8E6C9"; // 淡薄荷绿
+            fontname="Microsoft YaHei Bold";
+            fontsize=16; // 子集群标签字体大小
+
+            "firewall.core.firewall" [label="firewall.py\n(防火墙协调器)", fillcolor="#DDEDDA"];
+            "firewall.core.packet_interceptor" [label="packet_interceptor.py\n(数据包捕获)", fillcolor="#DDEDDA"];
+            "firewall.core.packet_analyzer" [label="packet_analyzer.py\n(分析引擎)", fillcolor="#DDEDDA"];
+            "firewall.core.rule_manager" [label="rule_manager.py\n(规则引擎)", fillcolor="#DDEDDA"];
+            "firewall.core.packet_processor" [label="packet_processor.py\n(数据包处理)", fillcolor="#DDEDDA"];
+        }
+
+        // --- Utils 子包 ---
+        subgraph cluster_utils {
+            label="工具 (utils)";
+            style="filled";
+            color="#FFDAB9"; // 桃色
+            fontname="Microsoft YaHei Bold";
+            fontsize=16; // 子集群标签字体大小
+
+            "firewall.utils.logging_utils" [label="logging_utils.py\n(日志工具)", fillcolor="#FFE4C4"];
+            "firewall.utils.network_utils" [label="network_utils.py\n(网络工具)", fillcolor="#FFE4C4"];
+            "firewall.utils.performance_utils" [label="performance_utils.py\n(性能工具)", fillcolor="#FFE4C4"];
+        }
+
+        // --- firewall 包内的顶层文件 ---
+        "firewall.config" [label="config.py\n(配置加载)", fillcolor="#E0E0E0"]; // 浅灰色
+        "firewall.constants" [label="constants.py\n(常量)", fillcolor="#E0E0E0"]; // 浅灰色
+        "firewall.__init__" [label="__init__.py\n(包初始化)", fillcolor="#E0E0E0"]; // 浅灰色
+
+
+        // --- firewall 包内的关系 ---
+        "firewall.ui.main_window" -> "firewall.core.firewall" [xlabel="控制/观察"];
+        "firewall.ui.main_window" -> "firewall.config" [xlabel="使用配置"];
+        "firewall.ui.main_window" -> "firewall.utils.logging_utils" [xlabel="记录日志到"];
+
+
+        "firewall.core.firewall" -> "firewall.core.packet_interceptor" [xlabel="使用"];
+        "firewall.core.firewall" -> "firewall.core.packet_analyzer" [xlabel="使用"];
+        "firewall.core.firewall" -> "firewall.core.rule_manager" [xlabel="使用"];
+        "firewall.core.firewall" -> "firewall.core.packet_processor" [xlabel="使用"];
+        "firewall.core.firewall" -> "firewall.config" [xlabel="使用配置"];
+        "firewall.core.firewall" -> "firewall.utils.logging_utils" [xlabel="记录事件"];
+
+        "firewall.core.packet_interceptor" -> "firewall.core.packet_processor" [xlabel="发送数据包到"];
+        "firewall.core.packet_processor" -> "firewall.core.packet_analyzer" [xlabel="发送数据包到"];
+        "firewall.core.packet_analyzer" -> "firewall.core.rule_manager" [xlabel="查阅规则"];
+        "firewall.core.packet_analyzer" -> "firewall.constants" [xlabel="使用常量"];
+        "firewall.core.rule_manager" -> "firewall.constants" [xlabel="使用常量"];
+
+
+        // 核心组件使用工具
+        "firewall.core.firewall" -> "firewall.utils.network_utils" [xlabel="使用"];
+        "firewall.core.packet_interceptor" -> "firewall.utils.network_utils" [xlabel="使用"];
+        "firewall.core.packet_analyzer" -> "firewall.utils.network_utils" [xlabel="使用"];
+
+        // 配置被多处使用
+        "firewall.config" -> "firewall.utils.logging_utils" [xlabel="配置 (日志)"];
+        "firewall.config" -> "firewall.core.packet_interceptor" [xlabel="配置 (拦截器)"];
+        "firewall.config" -> "firewall.core.rule_manager" [xlabel="配置 (规则)"];
+        "firewall.config" -> "firewall.ui.main_window" [xlabel="配置 (UI)"];
+
+    }
+
+    // --- 外部依赖与入口点 ---
+    "main.py" -> "firewall.ui.main_window" [xlabel="初始化并运行"];
+    "main.py" -> "firewall.config" [xlabel="加载配置"];
+
+    "firewall.config" -> "config.yaml" [xlabel="读取自", style=dashed, color="#808080"]; // 灰色虚线
+    "firewall.core.rule_manager" -> "rules.yaml" [xlabel="读取自", style=dashed, color="#808080"]; // 灰色虚线
+
+    edge [fontname="Microsoft YaHei", fontsize=14, color="#606060"]; // 边标签字体大小
+
+    label="网络防火墙系统 - 总体架构";
+    labelloc="t";
+    fontsize=22; // 图表总标题字体大小
+    fontname="Microsoft YaHei Bold"; // 图表总标题字体
+} 
