@@ -64,44 +64,39 @@ python main.py
 ## 项目结构
 
 ```
-network_firewall/
-├── firewall/
-│   ├── __init__.py
-│   ├── config.py              # 配置加载与管理
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── firewall.py        # 防火墙核心逻辑类
-│   │   ├── packet_analyzer.py   # 数据包分析与解码
-│   │   ├── packet_filter.py   # 数据包过滤逻辑
-│   │   ├── packet_interceptor.py# 数据包捕获与拦截 (基于PyDivert)
-│   │   ├── packet_processor.py  # 数据包处理流程协调
-│   │   ├── rule_manager.py    # 规则加载与管理
-│   │   └── rules/             # 规则定义、存储与验证
-│   │       ├── __init__.py
-│   │       ├── rule_storage.py  # 规则文件读写
-│   │       └── rule_validator.py# 规则格式验证
-│   ├── ui/
-│   │   ├── __init__.py
-│   │   ├── main_window.py     # 主窗口UI界面
-│   │   └── tabs/              # UI中的各个标签页
-│   │       ├── __init__.py
-│   │       ├── advanced_settings_tab.py
-│   │       ├── content_filter_tab.py
-│   │       ├── ip_filter_tab.py
-│   │       ├── log_tab.py
-│   │       ├── performance_tab.py
-│   │       └── port_filter_tab.py
-│   └── utils/                 # 工具模块
-│       ├── __init__.py
-│       ├── logging_utils.py   # 日志记录相关工具
-│       ├── network_utils.py   # 网络相关工具
-│       └── performance_utils.py # 性能相关工具
-├── logs/                      # 日志文件目录
-├── main.py                    # 程序主入口
-├── pyproject.toml             # 项目构建与依赖配置 (PDM)
-├── README.md                  # 项目说明文档
-├── rules.yaml                 # 防火墙规则配置文件
-└── ...                        # 其他配置文件和环境文件 (.gitignore, .venv, etc.)
+FIREWALL
+│  config.py              # 配置文件，定义了防火墙的日志、规则、性能、拦截器和UI的默认配置，并提供从YAML文件加载配置的功能
+│  constants.py          # 常量文件，定义了防火墙应用中使用的各种常量，如操作类型、协议类型、规则类型、日志类型等
+│  __init__.py           # 初始化文件，使firewall目录成为Python包
+│
+├─core                   # 核心功能模块，包含防火墙的主要逻辑和处理组件
+│  │  firewall.py        # 防火墙主类，负责整体协调和控制
+│  │  packet_analyzer.py # 数据包分析器，检查数据包是否符合规则
+│  │  packet_interceptor.py # 数据包拦截器，负责捕获网络数据包
+│  │  packet_processor.py # 数据包处理器，处理拦截到的数据包
+│  │  rule_manager.py    # 规则管理器，负责加载和管理防火墙规则
+│  │  __init__.py        # 初始化文件，使core目录成为Python包
+│
+├─ui                     # 用户界面模块，包含GUI相关代码
+│  │  main_window.py     # 主窗口文件，定义防火墙应用的主界面
+│  │  ui_utils.py        # UI工具函数，提供界面相关的辅助功能
+│  │  __init__.py        # 初始化文件，使ui目录成为Python包
+│  │
+│  └─tabs                # UI标签页，包含不同功能的界面标签
+│     │  advanced_settings_tab.py # 高级设置标签页，允许用户配置高级选项
+│     │  content_filter_tab.py    # 内容过滤标签页，用于设置内容过滤规则
+│     │  ip_filter_tab.py         # IP过滤标签页，用于配置IP黑白名单
+│     │  log_tab.py               # 日志标签页，显示防火墙日志信息
+│     │  performance_tab.py       # 性能标签页，显示性能统计和配置选项
+│     │  port_filter_tab.py       # 端口过滤标签页，用于配置端口规则
+│     │  traffic_monitor_tab.py   # 流量监控标签页，显示网络流量统计
+│     │  __init__.py              # 初始化文件，使tabs目录成为Python包
+│
+└─utils                  # 工具模块，包含辅助功能和工具函数
+   │  logging_utils.py   # 日志工具，提供日志记录相关功能
+   │  network_utils.py   # 网络工具，提供网络相关辅助函数
+   │  performance_utils.py # 性能工具，提供性能优化相关功能
+   │  __init__.py        # 初始化文件，使utils目录成为Python包
 ```
 
 ## 许可证
